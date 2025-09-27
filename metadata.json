@@ -1,0 +1,8 @@
+{
+  "name": "Gemini Vision Chat",
+  "description": "An interactive web application that allows users to have a live, spoken conversation with a Gemini-powered AI, which can see through the user's camera and hear through their microphone.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
