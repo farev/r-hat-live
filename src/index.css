@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* AR HUD base: treat pure black as transparent window on XREAL.
+   Use deep near-black with alpha for visible glass surfaces. */
+
+@layer base {
+  :root {
+    --hud-glass-bg: rgba(10,12,14,0.72);
+    --hud-glass-elev: rgba(16,18,20,0.78);
+    --hud-stroke: rgba(255,255,255,0.08);
+    --hud-text: #EDEDED;
+    --hud-subtle: rgba(237,237,237,0.7);
+    /* Orange theme accents */
+    --hud-accent: #fb923c; /* orange-400 */
+    --hud-accent-2: #f97316; /* orange-500 */
+  }
+
+  html, body {
+    background-color: #000000; /* transparent on glasses */
+    color: var(--hud-text);
+  }
+}
+
+@layer components {
+  .hud-glass {
+    background: var(--hud-glass-bg);
+    backdrop-filter: blur(10px) saturate(1.1);
+    -webkit-backdrop-filter: blur(10px) saturate(1.1);
+    border: 1px solid var(--hud-stroke);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .hud-elev {
+    background: var(--hud-glass-elev);
+    border: 1px solid var(--hud-stroke);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+
+  .hud-title {
+    background: linear-gradient(90deg, var(--hud-accent), var(--hud-accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "liga" 1, "kern" 1;
+  }
+
+  /* Safe area: ~8vw left/right, 10vh top/bottom */
+  .hud-safe {
+    padding-left: min(8vw, 96px);
+    padding-right: min(8vw, 96px);
+    padding-top: min(10vh, 120px);
+    padding-bottom: min(10vh, 120px);
+  }
+
+  /* Gentle motion defaults */
+  .hud-transition {
+    transition: all 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .hud-transition { transition: none !important; }
+}
