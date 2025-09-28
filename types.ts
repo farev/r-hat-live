@@ -10,3 +10,5 @@ export interface TranscriptionEntry {
   text: string;
   timestamp: number;
 }
+
+export type AIState = 'idle' | 'listening' | 'processing' | 'speaking';
