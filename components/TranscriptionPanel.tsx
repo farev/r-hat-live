@@ -46,8 +46,8 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({ transcri
                     </div>
                 </div>
             ) : (
-                transcriptions.map((entry) => (
-                    <div key={entry.timestamp} className={`flex ${entry.sender === Sender.User ? 'justify-end' : 'justify-start'}`}>
+                transcriptions.map((entry, index) => (
+                    <div key={`${entry.timestamp}-${index}`} className={`flex ${entry.sender === Sender.User ? 'justify-end' : 'justify-start'}`}>
                         <div className={`px-4 py-3 rounded-lg hud-transition max-w-4xl ${getBubbleClass(entry.sender)}`}>
                             <p className="text-[color:var(--hud-text)]">{entry.text}</p>
                         </div>
