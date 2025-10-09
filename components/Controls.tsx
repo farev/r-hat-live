@@ -32,6 +32,7 @@ export const Controls: React.FC<ControlsProps> = ({ status, aiState, onStart, on
     if (aiState === 'listening') return 'default';
     if (aiState === 'processing') return 'default';
     if (aiState === 'speaking') return 'default';
+    if (aiState === 'using_tool') return 'default';
     return 'red';
   };
 
@@ -43,6 +44,8 @@ export const Controls: React.FC<ControlsProps> = ({ status, aiState, onStart, on
         return <ProcessingIndicator className="absolute -top-8" />;
       case 'speaking':
         return <SpeakingIndicator className="absolute -top-8" />;
+      case 'using_tool':
+        return <ProcessingIndicator className="absolute -top-8" />;
       default:
         return null;
     }
@@ -87,9 +90,10 @@ export const Controls: React.FC<ControlsProps> = ({ status, aiState, onStart, on
           <span className={`px-2 py-1 rounded-full text-white ${
             aiState === 'listening' ? 'bg-blue-500/80' :
             aiState === 'processing' ? 'bg-yellow-500/80' :
-            aiState === 'speaking' ? 'bg-green-500/80' : ''
+            aiState === 'speaking' ? 'bg-green-500/80' :
+            aiState === 'using_tool' ? 'bg-purple-500/80' : ''
           }`}>
-            {aiState.charAt(0).toUpperCase() + aiState.slice(1)}
+            {aiState === 'using_tool' ? 'Using Tool' : aiState.charAt(0).toUpperCase() + aiState.slice(1)}
           </span>
         </div>
       )}

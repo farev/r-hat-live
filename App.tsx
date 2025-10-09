@@ -3,8 +3,9 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { VideoFeed } from './components/VideoFeed';
 import { Controls } from './components/Controls';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
-import { startSession, stopSession } from './services/geminiService';
-import { Sender, TranscriptionEntry, AIState } from './types';
+import { startSession, stopSession, getCurrentFrame } from './services/geminiService';
+import { Sender, TranscriptionEntry, AIState, ActiveHighlight } from './types';
+import { HighlightResult } from './types/tools';
 
 type Status = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'ERROR';
 
@@ -14,7 +15,8 @@ export default function App() {
   const [transcriptions, setTranscriptions] = useState<TranscriptionEntry[]>([]);
   const [statusMessage, setStatusMessage] = useState('Click the mic to start');
   const [aiState, setAiState] = useState<AIState>('idle');
-  
+  const [activeHighlights, setActiveHighlights] = useState<ActiveHighlight[]>([]);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -26,7 +28,68 @@ export default function App() {
   const addTranscriptionEntry = useCallback((entry: TranscriptionEntry) => {
     setTranscriptions(prev => [...prev, entry]);
   }, []);
-  
+
+  const handleHighlight = useCallback(async (objectName: string) => {
+    console.log('🎯 App: Handling highlight for:', objectName);
+
+    // Add system message about tool usage
+    setTranscriptions(prev => [...prev, {
+      sender: Sender.System,
+      text: `Highlighting ${objectName}...`,
+      timestamp: Date.now()
+    }]);
+
+    try {
+      // Capture current frame
+      const frameData = await getCurrentFrame();
+      if (!frameData) {
+        throw new Error('Failed to capture current frame');
+      }
+
+      // TODO: Call backend API to process highlight (Phase 2)
+      // For now, return a mock success response
+      console.log('📸 Frame captured, ready to send to backend');
+
+      // Mock response for Phase 1 (will be replaced with actual API call in Phase 2)
+      const mockResult: HighlightResult = {
+        success: true,
+        object_name: objectName,
+        masks: [],
+        annotated_image: frameData // For now, just return the original frame
+      };
+
+      // Add system message about result
+      setTranscriptions(prev => [...prev, {
+        sender: Sender.System,
+        text: `Highlighted ${objectName} (mock - backend not connected yet)`,
+        timestamp: Date.now()
+      }]);
+
+      // Create highlight overlay
+      const highlight: ActiveHighlight = {
+        id: `highlight_${Date.now()}`,
+        object_name: objectName,
+        annotated_image: mockResult.annotated_image || '',
+        timestamp: Date.now()
+      };
+
+      setActiveHighlights(prev => [...prev, highlight]);
+
+    } catch (error) {
+      console.error('❌ Highlight error:', error);
+
+      setTranscriptions(prev => [...prev, {
+        sender: Sender.System,
+        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: Date.now()
+      }]);
+    }
+  }, []);
+
+  const removeHighlight = useCallback((id: string) => {
+    setActiveHighlights(prev => prev.filter(h => h.id !== id));
+  }, []);
+
   useEffect(() => {
     return () => {
       // Cleanup on unmount
@@ -119,7 +182,8 @@ export default function App() {
           canvasRef.current,
           addTranscriptionEntry,
           (msg) => updateStatus(msg, 'ACTIVE'),
-          setAiState
+          setAiState,
+          handleHighlight
         );
       }
     } catch (error) {
@@ -204,7 +268,12 @@ export default function App() {
                 transformStyle: "preserve-3d"
               }}
             >
-              <VideoFeed mediaStream={mediaStream} videoRef={videoRef} />
+              <VideoFeed
+                mediaStream={mediaStream}
+                videoRef={videoRef}
+                highlights={activeHighlights}
+                onDismissHighlight={removeHighlight}
+              />
               {!mediaStream && status !== 'CONNECTING' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4">
                   <div className="hud-glass rounded-xl p-6">

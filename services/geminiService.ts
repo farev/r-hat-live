@@ -1,6 +1,5 @@
-
 // FIX: `LiveSession` is not an exported member of `@google/genai`.
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from "@google/genai";
 import { decode, decodeAudioData, createPcmBlob, blobToBase64 } from '../utils/audioUtils';
 import { Sender, TranscriptionEntry, AIState } from '../types';
 
@@ -23,29 +22,58 @@ const sources = new Set<AudioBufferSourceNode>();
 let audioQueue: AudioBuffer[] = [];
 let isPlayingQueue = false;
 
+// Store canvas reference for getCurrentFrame
+let currentCanvasElement: HTMLCanvasElement | null = null;
+
+// Function declaration for highlight tool
+const highlightObjectFunctionDeclaration: FunctionDeclaration = {
+    name: 'highlight_object',
+    description: 'Highlights and identifies objects in the camera view by drawing bounding boxes and segmentation masks around them. Use this when the user asks to show, highlight, point out, or locate specific objects.',
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            object_name: {
+                type: Type.STRING,
+                description: 'The name of the object to highlight in the camera view (e.g., "cup", "laptop", "person", "phone")',
+            },
+        },
+        required: ['object_name'],
+    },
+};
+
 export async function startSession(
     videoElement: HTMLVideoElement,
     canvasElement: HTMLCanvasElement,
     onTranscriptionUpdate: (entry: TranscriptionEntry) => void,
     onStatusUpdate: (status: string) => void,
     onAIStateUpdate: (state: AIState) => void,
+    onHighlight?: (objectName: string) => void,
 ): Promise<void> {
+    // Store canvas reference
+    currentCanvasElement = canvasElement;
+
     onStatusUpdate("Initializing Gemini...");
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
     let currentInputTranscription = '';
     let currentOutputTranscription = '';
 
+    const toolsConfig = [
+        { google_search: {} },
+        { functionDeclarations: [highlightObjectFunctionDeclaration] }
+    ];
+
     console.log('🚀 STARTING SESSION WITH CONFIG:');
     console.log('Model:', 'gemini-2.5-flash-native-audio-preview-09-2025');
-    console.log('Tools:', [{ google_search: {} }]);
+    console.log('Tools:', JSON.stringify(toolsConfig, null, 2));
     console.log('Response Modalities:', [Modality.AUDIO]);
+    console.log('Highlight handler registered:', !!onHighlight);
 
     sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         callbacks: {
             onopen: async () => {
-                console.log('✅ SESSION OPENED - Tools should be available');
+                console.log('✅ SESSION OPENED - Native function calling enabled');
                 onStatusUpdate("Connected! You can start talking.");
                 onAIStateUpdate('listening');
                 try {
@@ -87,14 +115,13 @@ export async function startSession(
                         settings: track.getSettings()
                     })));
 
-                    // Get the actual sample rate from the audio track to avoid sample rate mismatch
+                    // Get the actual sample rate from the audio track
                     const audioSettings = audioTracks[0].getSettings();
                     const actualSampleRate = audioSettings.sampleRate;
 
                     console.log('🎵 Detected audio sample rate:', actualSampleRate);
 
                     // FIX: Cast `window` to `any` to access `webkitAudioContext` for older browser compatibility.
-                    // Try to create AudioContext with detected sample rate, fallback to default
                     try {
                         if (actualSampleRate) {
                             inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: actualSampleRate });
@@ -104,12 +131,10 @@ export async function startSession(
                         }
                     } catch (sampleRateError) {
                         console.log('⚠️ Sample rate creation failed, using default AudioContext:', sampleRateError.message);
-                        // Fallback: let browser choose the best sample rate
                         inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
                     }
 
                     // FIX: Cast `window` to `any` to access `webkitAudioContext` for older browser compatibility.
-                    // Try to create output context, fallback to default sample rate if needed
                     try {
                         outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
                         console.log('✅ Created outputAudioContext with target sample rate:', OUTPUT_SAMPLE_RATE);
@@ -139,7 +164,6 @@ export async function startSession(
                         const currentSampleRate = inputAudioContext.sampleRate;
 
                         if (currentSampleRate !== INPUT_SAMPLE_RATE) {
-                            console.log(`🔄 Resampling from ${currentSampleRate}Hz to ${INPUT_SAMPLE_RATE}Hz`);
                             // Simple downsampling (for production, consider using a proper resampling library)
                             const ratio = currentSampleRate / INPUT_SAMPLE_RATE;
                             const newLength = Math.floor(inputData.length / ratio);
@@ -188,23 +212,41 @@ export async function startSession(
                 }
             },
             onmessage: async (message: LiveServerMessage) => {
-                // Log all messages for debugging
-                console.log('=== GEMINI API MESSAGE ===');
-                console.log('Full message:', JSON.stringify(message, null, 2));
+                // Handle NATIVE function calling (toolCall in message)
+                if (message.toolCall) {
+                    console.log('🔧 NATIVE TOOL CALL DETECTED:', message.toolCall);
+                    onAIStateUpdate('using_tool');
 
-                // Check for tool calls specifically
-                if (message.serverContent?.modelTurn?.parts) {
-                    message.serverContent.modelTurn.parts.forEach((part, index) => {
-                        if (part.functionCall) {
-                            console.log(`🔧 TOOL CALL ${index}:`, part.functionCall);
+                    for (const fc of message.toolCall.functionCalls) {
+                        console.log('📞 Function call:', fc.name, 'with args:', fc.args);
+
+                        if (fc.name === 'highlight_object') {
+                            const objectName = fc.args.object_name as string || 'object';
+                            console.log(`🎯 Highlighting object: ${objectName}`);
+
+                            // Call the highlight handler
+                            if (onHighlight) {
+                                onHighlight(objectName);
+                            }
+
+                            // Send tool response back to Gemini
+                            if (sessionPromise) {
+                                sessionPromise.then((s) => {
+                                    s.sendToolResponse({
+                                        functionResponses: [{
+                                            id: fc.id,
+                                            name: fc.name,
+                                            response: { result: `Successfully highlighted ${objectName}` },
+                                        }]
+                                    });
+                                    console.log('✅ Tool response sent to Gemini');
+                                });
+                            }
                         }
-                        if (part.functionResponse) {
-                            console.log(`📋 TOOL RESPONSE ${index}:`, part.functionResponse);
-                        }
-                        if (part.text) {
-                            console.log(`💬 TEXT PART ${index}:`, part.text);
-                        }
-                    });
+                    }
+
+                    // Return to listening after tool execution
+                    setTimeout(() => onAIStateUpdate('listening'), 500);
                 }
 
                 // Handle input transcription (user speaking)
@@ -221,7 +263,6 @@ export async function startSession(
 
                 // Handle turn completion
                 if (message.serverContent?.turnComplete) {
-                    console.log('🏁 TURN COMPLETE');
                     if (currentInputTranscription.trim()) {
                         onTranscriptionUpdate({ sender: Sender.User, text: currentInputTranscription, timestamp: Date.now() });
                     }
@@ -237,29 +278,22 @@ export async function startSession(
 
                 // Handle model thinking/processing
                 if (message.serverContent?.modelTurn && !message.serverContent?.outputTranscription) {
-                    console.log('🤔 MODEL PROCESSING/THINKING');
                     onAIStateUpdate('processing');
                 }
 
-                // Handle audio playback with better buffering for Linux
+                // Handle audio playback with better buffering
                 const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
                 if (audioData && outputAudioContext) {
                     onAIStateUpdate('speaking');
 
                     try {
-                        // Resume audio context if suspended (common on Linux)
+                        // Resume audio context if suspended
                         if (outputAudioContext.state === 'suspended') {
                             console.log('🔊 Resuming suspended audio context...');
                             await outputAudioContext.resume();
                         }
 
                         const audioBuffer = await decodeAudioData(decode(audioData), outputAudioContext, OUTPUT_SAMPLE_RATE, 1);
-                        console.log('🎵 Audio buffer created:', {
-                            duration: audioBuffer.duration,
-                            sampleRate: audioBuffer.sampleRate,
-                            channels: audioBuffer.numberOfChannels,
-                            contextState: outputAudioContext.state
-                        });
 
                         const source = outputAudioContext.createBufferSource();
 
@@ -276,7 +310,7 @@ export async function startSession(
 
                         // If this is the first audio chunk, start immediately with small buffer
                         if (sources.size === 0) {
-                            nextStartTime = currentTime + 0.05; // Very small buffer for first chunk
+                            nextStartTime = currentTime + 0.05;
                         } else {
                             // For subsequent chunks, ensure smooth continuity
                             nextStartTime = Math.max(nextStartTime, currentTime + 0.02);
@@ -284,7 +318,6 @@ export async function startSession(
 
                         source.addEventListener('ended', () => {
                             sources.delete(source);
-                            console.log(`🔚 Audio chunk ended. Remaining sources: ${sources.size}`);
                             // If this was the last audio source, return to listening
                             if (sources.size === 0) {
                                 setTimeout(() => onAIStateUpdate('listening'), 200);
@@ -295,8 +328,6 @@ export async function startSession(
                         const endTime = nextStartTime + audioBuffer.duration;
                         nextStartTime = endTime;
                         sources.add(source);
-
-                        console.log(`🎤 Audio scheduled: start=${nextStartTime.toFixed(3)}, duration=${audioBuffer.duration.toFixed(3)}, currentTime=${currentTime.toFixed(3)}`);
 
                     } catch (audioError) {
                         console.error('❌ Audio playback error:', audioError);
@@ -318,15 +349,56 @@ export async function startSession(
             responseModalities: [Modality.AUDIO],
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            tools: [{ google_search: {} }],
+            tools: toolsConfig,
             speechConfig: {
                 voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
             },
-            systemInstruction: 'You are R-Hat, a friendly and helpful AI assistant that can see, hear, and search the web. You are an expert engineer that can help with any hands-on task. You have access to Google Search tools. When users ask you to search for something, find videos, or look up current information, you should use the available Google Search functionality. If you cannot access search tools, clearly state that you cannot search and explain the limitation. Always be honest about your capabilities. Respond based on what you perceive from video/audio. Keep responses concise and conversational.',
+            systemInstruction: `You are R-Hat, a friendly and helpful AI assistant that can see, hear, and search the web. You are an expert engineer that can help with any hands-on task.
+
+You have access to the following tools:
+1. Google Search - for looking up current information, videos, or web content
+2. highlight_object - for highlighting and identifying objects in the camera view
+
+When users ask you to "show me", "highlight", "point out", "where is", or "find" a specific object in the camera view, use the highlight_object function. For example:
+- "highlight the cup" → call highlight_object with object_name="cup"
+- "show me the laptop" → call highlight_object with object_name="laptop"
+- "where is my phone" → call highlight_object with object_name="phone"
+
+Always be honest about your capabilities. Respond based on what you perceive from video/audio. Keep responses concise and conversational.`,
         },
     });
 
     session = await sessionPromise;
+}
+
+/**
+ * Captures the current frame from the canvas as a base64 encoded image
+ */
+export async function getCurrentFrame(): Promise<string | null> {
+    if (!currentCanvasElement) {
+        console.error('No canvas element available');
+        return null;
+    }
+
+    try {
+        return new Promise((resolve) => {
+            currentCanvasElement!.toBlob(
+                async (blob) => {
+                    if (blob) {
+                        const base64 = await blobToBase64(blob);
+                        resolve(base64);
+                    } else {
+                        resolve(null);
+                    }
+                },
+                'image/jpeg',
+                0.9
+            );
+        });
+    } catch (error) {
+        console.error('Error capturing frame:', error);
+        return null;
+    }
 }
 
 function cleanUp() {
@@ -355,6 +427,7 @@ function cleanUp() {
     nextStartTime = 0;
     audioQueue = [];
     isPlayingQueue = false;
+    currentCanvasElement = null;
 }
 
 export function stopSession() {

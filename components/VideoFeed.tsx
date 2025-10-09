@@ -2,13 +2,17 @@
 import React, { useEffect, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { HighlightOverlay } from './HighlightOverlay';
+import { ActiveHighlight } from '../types';
 
 interface VideoFeedProps {
   mediaStream: MediaStream | null;
   videoRef: React.RefObject<HTMLVideoElement>;
+  highlights?: ActiveHighlight[];
+  onDismissHighlight?: (id: string) => void;
 }
 
-export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef }) => {
+export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, highlights = [], onDismissHighlight }) => {
   // --- 3D Tilt Animation Logic ---
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
@@ -71,6 +75,12 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef }) =
           muted
           className="w-full h-full object-cover transform scaleX-[-1]"
         />
+
+        {/* Highlight Overlay */}
+        {onDismissHighlight && (
+          <HighlightOverlay highlights={highlights} onDismiss={onDismissHighlight} />
+        )}
+
         {/* Enhanced inner border for 3D glass effect */}
         <div className="pointer-events-none absolute inset-0 ring-2 ring-[rgba(255,255,255,0.12)] rounded-xl"></div>
 

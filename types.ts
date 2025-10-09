@@ -11,4 +11,11 @@ export interface TranscriptionEntry {
   timestamp: number;
 }
 
-export type AIState = 'idle' | 'listening' | 'processing' | 'speaking';
+export type AIState = 'idle' | 'listening' | 'processing' | 'speaking' | 'using_tool';
+
+export interface ActiveHighlight {
+  id: string;
+  object_name: string;
+  annotated_image: string; // base64 encoded
+  timestamp: number;
+}
