@@ -374,15 +374,17 @@ Always be honest about your capabilities. Respond based on what you perceive fro
 /**
  * Captures the current frame from the canvas as a base64 encoded image
  */
-export async function getCurrentFrame(): Promise<string | null> {
-    if (!currentCanvasElement) {
+export async function getCurrentFrame(canvasElement?: HTMLCanvasElement): Promise<string | null> {
+    const canvas = canvasElement || currentCanvasElement;
+
+    if (!canvas) {
         console.error('No canvas element available');
         return null;
     }
 
     try {
         return new Promise((resolve) => {
-            currentCanvasElement!.toBlob(
+            canvas.toBlob(
                 async (blob) => {
                     if (blob) {
                         const base64 = await blobToBase64(blob);

@@ -1,0 +1,23 @@
+# FastAPI and server dependencies
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Core ML dependencies
+torch>=2.3.1
+torchvision>=0.18.1
+numpy>=1.24.0
+opencv-python>=4.9.0
+Pillow>=10.0.0
+
+# Grounded-SAM 2 dependencies
+# Note: Will be installed from GitHub
+supervision>=0.18.0
+transformers>=4.57.0
+addict>=2.4.0
+yapf>=0.43.0
+timm>=1.0.0
+pycocotools>=2.0.0
+
+# Utility
+python-dotenv==1.0.0

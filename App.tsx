@@ -4,6 +4,8 @@ import { VideoFeed } from './components/VideoFeed';
 import { Controls } from './components/Controls';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
 import { startSession, stopSession, getCurrentFrame } from './services/geminiService';
+import { highlightObject } from './services/highlightService';
+import { videoTracker } from './services/trackingService';
 import { Sender, TranscriptionEntry, AIState, ActiveHighlight } from './types';
 import { HighlightResult } from './types/tools';
 
@@ -19,6 +21,7 @@ export default function App() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const trackingCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const updateStatus = useCallback((message: string, statusOverride?: Status) => {
     setStatusMessage(message);
@@ -35,45 +38,57 @@ export default function App() {
     // Add system message about tool usage
     setTranscriptions(prev => [...prev, {
       sender: Sender.System,
-      text: `Highlighting ${objectName}...`,
+      text: `Starting tracking for ${objectName}...`,
       timestamp: Date.now()
     }]);
 
     try {
-      // Capture current frame
-      const frameData = await getCurrentFrame();
+      // Capture current frame - pass canvas ref
+      const frameData = await getCurrentFrame(canvasRef.current || undefined);
       if (!frameData) {
         throw new Error('Failed to capture current frame');
       }
 
-      // TODO: Call backend API to process highlight (Phase 2)
-      // For now, return a mock success response
-      console.log('📸 Frame captured, ready to send to backend');
+      console.log('📸 Frame captured, sending to backend for initial detection...');
 
-      // Mock response for Phase 1 (will be replaced with actual API call in Phase 2)
-      const mockResult: HighlightResult = {
-        success: true,
-        object_name: objectName,
-        masks: [],
-        annotated_image: frameData // For now, just return the original frame
-      };
+      // Call backend API to get initial detection
+      const result: HighlightResult = await highlightObject(frameData, objectName);
+
+      if (!result.success || !result.masks || result.masks.length === 0) {
+        throw new Error(result.error || `No ${objectName} detected in view`);
+      }
+
+      console.log(`✅ Backend returned ${result.masks.length} detections`);
+
+      // Get the first detected bounding box
+      const initialBox = result.masks[0].box as [number, number, number, number];
 
       // Add system message about result
       setTranscriptions(prev => [...prev, {
         sender: Sender.System,
-        text: `Highlighted ${objectName} (mock - backend not connected yet)`,
+        text: `Now tracking ${objectName} in real-time`,
         timestamp: Date.now()
       }]);
 
-      // Create highlight overlay
-      const highlight: ActiveHighlight = {
-        id: `highlight_${Date.now()}`,
-        object_name: objectName,
-        annotated_image: mockResult.annotated_image || '',
-        timestamp: Date.now()
-      };
+      // Start tracking with canvas overlay
+      if (trackingCanvasRef.current && videoRef.current) {
+        const trackingId = await videoTracker.startTracking(
+          objectName,
+          initialBox,
+          trackingCanvasRef.current,
+          videoRef.current
+        );
 
-      setActiveHighlights(prev => [...prev, highlight]);
+        // Add to active highlights (for UI badge)
+        const highlight: ActiveHighlight = {
+          id: trackingId,
+          object_name: objectName,
+          annotated_image: '', // Not used in tracking mode
+          timestamp: Date.now()
+        };
+
+        setActiveHighlights(prev => [...prev, highlight]);
+      }
 
     } catch (error) {
       console.error('❌ Highlight error:', error);
@@ -87,6 +102,10 @@ export default function App() {
   }, []);
 
   const removeHighlight = useCallback((id: string) => {
+    // Stop tracking
+    videoTracker.stopTracking();
+
+    // Remove from active highlights
     setActiveHighlights(prev => prev.filter(h => h.id !== id));
   }, []);
 
@@ -217,10 +236,7 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col font-sans hud-safe">
       {/* Fixed Header */}
-      <header
-        className="flex justify-between items-start p-4 flex-shrink-0"
-        style={{ perspective: "2000px" }}
-      >
+      <header className="flex justify-between items-start p-4 flex-shrink-0">
         {/* Empty space - Top Left */}
         <div className="flex-1"></div>
 
@@ -252,27 +268,14 @@ export default function App() {
 
         {/* Video Feed and Controls - Top Right */}
         <div className="flex-1 flex justify-end">
-          <div
-            className="flex flex-col gap-4 relative z-10"
-            style={{
-              perspective: "2500px",
-              transform: "translateZ(15px) rotateY(-6deg)",
-              transformStyle: "preserve-3d",
-              transformOrigin: "center center"
-            }}
-          >
-            <div
-              className="hud-elev rounded-2xl overflow-hidden relative aspect-video hud-transition w-80"
-              style={{
-                transform: "translateZ(10px)",
-                transformStyle: "preserve-3d"
-              }}
-            >
+          <div className="flex flex-col gap-4 relative z-10">
+            <div className="hud-elev rounded-2xl overflow-hidden relative aspect-video hud-transition w-300">
               <VideoFeed
                 mediaStream={mediaStream}
                 videoRef={videoRef}
                 highlights={activeHighlights}
                 onDismissHighlight={removeHighlight}
+                trackingCanvasRef={trackingCanvasRef}
               />
               {!mediaStream && status !== 'CONNECTING' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4">
@@ -285,11 +288,7 @@ export default function App() {
               )}
             </div>
 
-            <div
-              style={{
-                transform: "translateZ(5px)",
-              }}
-            >
+            <div>
               <Controls status={status} aiState={aiState} onStart={handleStart} onStop={handleStop} />
             </div>
           </div>
