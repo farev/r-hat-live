@@ -21,7 +21,7 @@ export const HighlightOverlay: React.FC<HighlightOverlayProps> = ({ highlights, 
         >
           {/* Annotated image overlay */}
           <img
-            src={highlight.annotated_image}
+            src={`data:image/png;base64,${highlight.annotated_image}`}
             alt={`Highlight: ${highlight.object_name}`}
             className="w-full h-full object-cover opacity-90"
           />

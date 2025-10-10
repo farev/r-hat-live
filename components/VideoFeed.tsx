@@ -1,6 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
-import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
+import React, { useEffect } from 'react';
 import { cn } from "@/lib/utils";
 import { HighlightOverlay } from './HighlightOverlay';
 import { ActiveHighlight } from '../types';
@@ -10,36 +9,10 @@ interface VideoFeedProps {
   videoRef: React.RefObject<HTMLVideoElement>;
   highlights?: ActiveHighlight[];
   onDismissHighlight?: (id: string) => void;
+  trackingCanvasRef?: React.RefObject<HTMLCanvasElement>;
 }
 
-export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, highlights = [], onDismissHighlight }) => {
-  // --- 3D Tilt Animation Logic ---
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-
-  const springConfig = { damping: 15, stiffness: 150 };
-  const springX = useSpring(mouseX, springConfig);
-  const springY = useSpring(mouseY, springConfig);
-
-  const rotateX = useTransform(springY, [-0.5, 0.5], ["8deg", "-8deg"]);
-  const rotateY = useTransform(springX, [-0.5, 0.5], ["-8deg", "8deg"]);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const { width, height, left, top } = rect;
-    const mouseXVal = e.clientX - left;
-    const mouseYVal = e.clientY - top;
-    const xPct = mouseXVal / width - 0.5;
-    const yPct = mouseYVal / height - 0.5;
-    mouseX.set(xPct);
-    mouseY.set(yPct);
-  };
-
-  const handleMouseLeave = () => {
-    mouseX.set(0);
-    mouseY.set(0);
-  };
-
+export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, highlights = [], onDismissHighlight, trackingCanvasRef }) => {
   useEffect(() => {
     if (videoRef.current && mediaStream) {
       videoRef.current.srcObject = mediaStream;
@@ -47,22 +20,8 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, hig
   }, [mediaStream, videoRef]);
 
   return (
-    <motion.div
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      style={{
-        rotateX,
-        rotateY,
-        transformStyle: "preserve-3d",
-        perspective: "1000px"
-      }}
-      className="relative w-full h-full"
-    >
+    <div className="relative w-full h-full">
       <div
-        style={{
-          transform: "translateZ(20px)",
-          transformStyle: "preserve-3d",
-        }}
         className={cn(
           "relative w-full h-full bg-[rgba(10,12,14,0.72)] rounded-xl overflow-hidden shadow-2xl hud-transition",
           "border border-white/10"
@@ -76,20 +35,39 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, hig
           className="w-full h-full object-cover transform scaleX-[-1]"
         />
 
-        {/* Highlight Overlay */}
-        {onDismissHighlight && (
-          <HighlightOverlay highlights={highlights} onDismiss={onDismissHighlight} />
+        {/* Canvas overlay for tracking annotations */}
+        {trackingCanvasRef && (
+          <canvas
+            ref={trackingCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none transform scaleX-[-1]"
+            style={{ zIndex: 5 }}
+          />
         )}
 
-        {/* Enhanced inner border for 3D glass effect */}
-        <div className="pointer-events-none absolute inset-0 ring-2 ring-[rgba(255,255,255,0.12)] rounded-xl"></div>
+        {/* Active tracking badges */}
+        {highlights.length > 0 && onDismissHighlight && (
+          <div className="absolute top-2 left-2 flex flex-col gap-2 pointer-events-auto" style={{ zIndex: 10 }}>
+            {highlights.map((highlight) => (
+              <div
+                key={highlight.id}
+                className="flex items-center gap-2 bg-purple-600/90 text-white px-3 py-1 rounded-full text-xs font-medium"
+              >
+                <span>Tracking: {highlight.object_name}</span>
+                <button
+                  onClick={() => onDismissHighlight(highlight.id)}
+                  className="hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center transition-colors"
+                  aria-label="Stop tracking"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {/* Additional depth layers for 3D effect */}
-        <div
-          style={{ transform: "translateZ(10px)" }}
-          className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/20 rounded-xl"
-        ></div>
+        {/* Enhanced inner border */}
+        <div className="pointer-events-none absolute inset-0 ring-2 ring-[rgba(255,255,255,0.12)] rounded-xl"></div>
       </div>
-    </motion.div>
+    </div>
   );
 };
