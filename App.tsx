@@ -101,6 +101,49 @@ export default function App() {
     }
   }, []);
 
+  const handleShowBoundingBox = useCallback(async (objectName: string, x1: number, y1: number, x2: number, y2: number) => {
+    console.log(`🎯 App: Showing bounding box for ${objectName} at [${x1}, ${y1}, ${x2}, ${y2}]`);
+
+    // Add system message
+    setTranscriptions(prev => [...prev, {
+      sender: Sender.System,
+      text: `Displaying bounding box for ${objectName}`,
+      timestamp: Date.now()
+    }]);
+
+    try {
+      // Start tracking with the Gemini-provided coordinates
+      if (trackingCanvasRef.current && videoRef.current) {
+        const box: [number, number, number, number] = [x1, y1, x2, y2];
+
+        const trackingId = await videoTracker.startTracking(
+          objectName,
+          box,
+          trackingCanvasRef.current,
+          videoRef.current
+        );
+
+        // Add to active highlights
+        const highlight: ActiveHighlight = {
+          id: trackingId,
+          object_name: objectName,
+          annotated_image: '',
+          timestamp: Date.now()
+        };
+
+        setActiveHighlights(prev => [...prev, highlight]);
+      }
+    } catch (error) {
+      console.error('❌ Bounding box display error:', error);
+
+      setTranscriptions(prev => [...prev, {
+        sender: Sender.System,
+        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: Date.now()
+      }]);
+    }
+  }, []);
+
   const removeHighlight = useCallback((id: string) => {
     // Stop tracking
     videoTracker.stopTracking();
@@ -202,7 +245,8 @@ export default function App() {
           addTranscriptionEntry,
           (msg) => updateStatus(msg, 'ACTIVE'),
           setAiState,
-          handleHighlight
+          handleHighlight,
+          handleShowBoundingBox
         );
       }
     } catch (error) {

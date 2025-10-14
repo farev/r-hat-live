@@ -104,10 +104,11 @@ def image_to_base64(image: np.ndarray) -> str:
     return base64.b64encode(buffer).decode('utf-8')
 
 
-def preprocess_image(image_bgr: np.ndarray) -> torch.Tensor:
+def preprocess_image(image_bgr: np.ndarray) -> tuple[torch.Tensor, tuple[int, int]]:
     """
     Preprocess image for Grounding DINO
     Converts BGR numpy array to normalized tensor
+    Returns: (transformed_tensor, (original_h, original_w))
     """
     # Convert BGR to RGB
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -115,15 +116,25 @@ def preprocess_image(image_bgr: np.ndarray) -> torch.Tensor:
     # Convert to PIL Image
     image_pil = Image.fromarray(image_rgb)
 
-    # Apply transforms
+    # Store original size
+    original_size = image_pil.size  # (width, height)
+
+    # Apply transforms - using larger size for better detail preservation
+    # Higher resolution helps with small or distant objects
     transform = T.Compose([
-        T.RandomResize([800], max_size=1333),
+        T.RandomResize([1000], max_size=1600),  # Increased from 800/1333
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
     image_transformed, _ = transform(image_pil, None)
-    return image_transformed
+
+    # Get transformed size from tensor (C, H, W)
+    transformed_h, transformed_w = image_transformed.shape[1], image_transformed.shape[2]
+
+    logger.info(f"Image preprocessing: original size {original_size}, transformed size {transformed_w}x{transformed_h}")
+
+    return image_transformed, (transformed_h, transformed_w)
 
 
 def annotate_image(
@@ -219,18 +230,35 @@ async def highlight_object(request: HighlightRequest):
 
         # Decode image
         image = base64_to_image(request.image)
+        h, w, _ = image.shape
+        logger.info(f"Original image dimensions: {image.shape}")
 
         # Preprocess image for Grounding DINO
-        image_tensor = preprocess_image(image)
+        image_tensor, (transformed_h, transformed_w) = preprocess_image(image)
 
         # Run Grounding DINO to detect objects
-        BOX_THRESHOLD = 0.35
-        TEXT_THRESHOLD = 0.25
+        # Lowered thresholds for better sensitivity
+        BOX_THRESHOLD = 0.25  # Lowered from 0.35
+        TEXT_THRESHOLD = 0.20  # Lowered from 0.25
+
+        # Enhance the caption with common variations to improve detection
+        # Split on common separators and clean up the prompt
+        caption = request.object_name.lower().strip()
+
+        # Add variations: "green poster" -> "green poster . poster . green sign"
+        caption_parts = caption.split()
+        if len(caption_parts) >= 2:
+            # Include the full phrase and key components
+            enhanced_caption = f"{caption} . {caption_parts[-1]}"  # e.g., "green poster . poster"
+        else:
+            enhanced_caption = caption
+
+        logger.info(f"Enhanced caption for detection: '{enhanced_caption}'")
 
         boxes, confidences, labels = predict(
             model=grounding_model,
             image=image_tensor,
-            caption=request.object_name,
+            caption=enhanced_caption,
             box_threshold=BOX_THRESHOLD,
             text_threshold=TEXT_THRESHOLD,
             device=DEVICE
@@ -244,11 +272,31 @@ async def highlight_object(request: HighlightRequest):
                 error=f"No '{request.object_name}' detected in the image"
             )
 
-        logger.info(f"Found {len(boxes)} instances of {request.object_name}")
+        logger.info(f"Found {len(boxes)} instances with confidences: {confidences.cpu().numpy().tolist()}")
 
-        # Convert boxes to format SAM2 expects
-        h, w, _ = image.shape
+        # Filter: Only keep detections with confidence > 0.3 and take top 3
+        confidence_mask = confidences > 0.30
+        if confidence_mask.sum() > 0:
+            boxes = boxes[confidence_mask]
+            confidences = confidences[confidence_mask]
+            labels = [l for i, l in enumerate(labels) if confidence_mask[i]]
+            logger.info(f"After confidence filtering (>0.30): {len(boxes)} detections remaining")
+
+        # Sort by confidence and take top 3 detections
+        if len(boxes) > 3:
+            top_indices = torch.argsort(confidences, descending=True)[:3]
+            boxes = boxes[top_indices]
+            confidences = confidences[top_indices]
+            labels = [labels[i] for i in top_indices.cpu().numpy()]
+            logger.info(f"Taking top 3 highest confidence detections")
+
+        # Boxes from Grounding DINO are normalized to transformed image
+        # Scale them to original image dimensions
+        logger.info(f"Converting boxes: normalized boxes shape {boxes.shape}")
+        logger.info(f"Transformed size: {transformed_w}x{transformed_h}, Original size: {w}x{h}")
         boxes_xyxy = boxes * torch.tensor([w, h, w, h])
+        logger.info(f"Boxes in original image pixel coordinates: {boxes_xyxy.cpu().numpy().tolist()}")
+        logger.info(f"Final confidences: {confidences.cpu().numpy().tolist()}")
 
         # Run SAM2 to get masks
         sam2_predictor.set_image(image)
@@ -278,6 +326,11 @@ async def highlight_object(request: HighlightRequest):
 
         # Annotate image
         annotated_image = annotate_image(image, detections, detection_labels)
+
+        # Save annotated image for debugging
+        debug_path = '/tmp/debug_annotated.jpg'
+        cv2.imwrite(debug_path, annotated_image)
+        logger.info(f"Saved annotated image to {debug_path}")
 
         # Convert to base64
         annotated_base64 = image_to_base64(annotated_image)

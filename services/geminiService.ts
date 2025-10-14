@@ -25,19 +25,51 @@ let isPlayingQueue = false;
 // Store canvas reference for getCurrentFrame
 let currentCanvasElement: HTMLCanvasElement | null = null;
 
-// Function declaration for highlight tool
-const highlightObjectFunctionDeclaration: FunctionDeclaration = {
-    name: 'highlight_object',
-    description: 'Highlights and identifies objects in the camera view by drawing bounding boxes and segmentation masks around them. Use this when the user asks to show, highlight, point out, or locate specific objects.',
+// Function declaration for highlight tool - COMMENTED OUT FOR TESTING
+// const highlightObjectFunctionDeclaration: FunctionDeclaration = {
+//     name: 'highlight_object',
+//     description: 'Highlights and identifies objects in the camera view by drawing bounding boxes and segmentation masks around them. Use this when the user asks to show, highlight, point out, or locate specific objects. This function uses a vision model that works best with DETAILED, DESCRIPTIVE object names.',
+//     parameters: {
+//         type: Type.OBJECT,
+//         properties: {
+//             object_name: {
+//                 type: Type.STRING,
+//                 description: 'A DETAILED description of the object to highlight. Include color, size, shape, material, and location details for better accuracy. Examples:\n- Good: "green exit sign on the wall", "red rectangular power button", "small silver drill on the table", "wooden cutting board with handle"\n- Bad: "sign", "button", "drill", "board"\n\nThe more specific and descriptive you are, the better the detection will work. Always include at least one visual attribute (color, shape, size, or material).',
+//             },
+//         },
+//         required: ['object_name'],
+//     },
+// };
+
+// NEW: Function declaration for showing bounding box with Gemini's native vision
+const showBoundingBoxFunctionDeclaration: FunctionDeclaration = {
+    name: 'show_bounding_box',
+    description: 'Displays a bounding box around an object in the camera view. Use this when the user asks to show, highlight, point out, or locate specific objects. You must analyze the video feed to determine the accurate pixel coordinates of the object.',
     parameters: {
         type: Type.OBJECT,
         properties: {
             object_name: {
                 type: Type.STRING,
-                description: 'The name of the object to highlight in the camera view (e.g., "cup", "laptop", "person", "phone")',
+                description: 'The name of the object being highlighted (e.g., "green poster", "exit sign", "laptop")',
+            },
+            x1: {
+                type: Type.NUMBER,
+                description: 'X coordinate of the top-left corner of the bounding box (in pixels)',
+            },
+            y1: {
+                type: Type.NUMBER,
+                description: 'Y coordinate of the top-left corner of the bounding box (in pixels)',
+            },
+            x2: {
+                type: Type.NUMBER,
+                description: 'X coordinate of the bottom-right corner of the bounding box (in pixels)',
+            },
+            y2: {
+                type: Type.NUMBER,
+                description: 'Y coordinate of the bottom-right corner of the bounding box (in pixels)',
             },
         },
-        required: ['object_name'],
+        required: ['object_name', 'x1', 'y1', 'x2', 'y2'],
     },
 };
 
@@ -48,6 +80,7 @@ export async function startSession(
     onStatusUpdate: (status: string) => void,
     onAIStateUpdate: (state: AIState) => void,
     onHighlight?: (objectName: string) => void,
+    onShowBoundingBox?: (objectName: string, x1: number, y1: number, x2: number, y2: number) => void,
 ): Promise<void> {
     // Store canvas reference
     currentCanvasElement = canvasElement;
@@ -58,9 +91,11 @@ export async function startSession(
     let currentInputTranscription = '';
     let currentOutputTranscription = '';
 
+    // TESTING: Using show_bounding_box tool to test Gemini's native bounding box capabilities
     const toolsConfig = [
         { google_search: {} },
-        { functionDeclarations: [highlightObjectFunctionDeclaration] }
+        { functionDeclarations: [showBoundingBoxFunctionDeclaration] }
+        // { functionDeclarations: [highlightObjectFunctionDeclaration] }  // OLD tool - kept for reference
     ];
 
     console.log('🚀 STARTING SESSION WITH CONFIG:');
@@ -220,6 +255,35 @@ export async function startSession(
                     for (const fc of message.toolCall.functionCalls) {
                         console.log('📞 Function call:', fc.name, 'with args:', fc.args);
 
+                        if (fc.name === 'show_bounding_box') {
+                            const objectName = fc.args.object_name as string || 'object';
+                            const x1 = fc.args.x1 as number;
+                            const y1 = fc.args.y1 as number;
+                            const x2 = fc.args.x2 as number;
+                            const y2 = fc.args.y2 as number;
+                            console.log(`🎯 Showing bounding box for: ${objectName} at [${x1}, ${y1}, ${x2}, ${y2}]`);
+
+                            // Call the bounding box handler
+                            if (onShowBoundingBox) {
+                                onShowBoundingBox(objectName, x1, y1, x2, y2);
+                            }
+
+                            // Send tool response back to Gemini
+                            if (sessionPromise) {
+                                sessionPromise.then((s) => {
+                                    s.sendToolResponse({
+                                        functionResponses: [{
+                                            id: fc.id,
+                                            name: fc.name,
+                                            response: { result: `Successfully displayed bounding box for ${objectName}` },
+                                        }]
+                                    });
+                                    console.log('✅ Tool response sent to Gemini');
+                                });
+                            }
+                        }
+
+                        // OLD highlight_object handler - kept for reference
                         if (fc.name === 'highlight_object') {
                             const objectName = fc.args.object_name as string || 'object';
                             console.log(`🎯 Highlighting object: ${objectName}`);
@@ -357,14 +421,35 @@ export async function startSession(
 
 You have access to the following tools:
 1. Google Search - for looking up current information, videos, or web content
-2. highlight_object - for highlighting and identifying objects in the camera view
+2. show_bounding_box - for displaying bounding boxes around objects in the camera view
 
-When users ask you to "show me", "highlight", "point out", "where is", or "find" a specific object in the camera view, use the highlight_object function. For example:
-- "highlight the cup" → call highlight_object with object_name="cup"
-- "show me the laptop" → call highlight_object with object_name="laptop"
-- "where is my phone" → call highlight_object with object_name="phone"
+IMPORTANT: How to use show_bounding_box
+When users ask you to "show me", "highlight", "point out", "where is", or "find" a specific object in the camera view:
 
-Always be honest about your capabilities. Respond based on what you perceive from video/audio. Keep responses concise and conversational.`,
+1. Analyze the video feed carefully to locate the requested object
+2. Determine the bounding box coordinates in pixels:
+   - x1, y1 = top-left corner of the box
+   - x2, y2 = bottom-right corner of the box
+3. Call the show_bounding_box function with these parameters:
+   - object_name: descriptive name (e.g., "green poster", "exit sign")
+   - x1, y1, x2, y2: the pixel coordinates you determined
+
+Examples:
+- User: "where is the green poster?"
+  Action: Analyze video → See green poster on left → Call show_bounding_box("green poster", 50, 300, 120, 450)
+  Response: "I can see a green poster on the left wall. I've highlighted it for you."
+
+- User: "show me the exit sign"
+  Action: Analyze video → See exit sign upper left → Call show_bounding_box("exit sign", 80, 150, 180, 200)
+  Response: "There's an exit sign on the upper left wall. I've marked it with a bounding box."
+
+CRITICAL:
+- Be as accurate as possible with pixel coordinates based on what you SEE in the video
+- The coordinates should tightly fit around the object
+- Always call the function first, then provide a brief verbal confirmation
+- If you cannot locate the object, explain what you see instead
+
+Always be honest about your capabilities. Keep responses concise and conversational.`,
         },
     });
 
