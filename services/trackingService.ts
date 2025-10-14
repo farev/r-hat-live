@@ -40,14 +40,32 @@ class VideoTracker {
     this.trackingId = `track_${Date.now()}`;
     this.isTracking = true;
 
-    // Set canvas size to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Set canvas size to match video display dimensions
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
 
     console.log(`🎯 Started tracking: ${objectName}`);
+    console.log(`📐 Canvas size: ${canvas.width}x${canvas.height}`);
+    console.log(`📹 Video size: ${video.videoWidth}x${video.videoHeight}`);
+    console.log(`📦 Initial box (backend coords): [${initialBox.join(', ')}]`);
+
+    // Scale box coordinates from video space to canvas display space
+    const scaleX = canvas.width / video.videoWidth;
+    const scaleY = canvas.height / video.videoHeight;
+
+    const scaledBox: [number, number, number, number] = [
+      initialBox[0] * scaleX,
+      initialBox[1] * scaleY,
+      initialBox[2] * scaleX,
+      initialBox[3] * scaleY
+    ];
+
+    console.log(`📏 Scale factors: x=${scaleX.toFixed(2)}, y=${scaleY.toFixed(2)}`);
+    console.log(`📦 Scaled box (canvas coords): [${scaledBox.map(v => v.toFixed(1)).join(', ')}]`);
 
     // Start the tracking loop
-    this.trackingLoop(objectName, initialBox);
+    this.trackingLoop(objectName, scaledBox);
 
     return this.trackingId;
   }
