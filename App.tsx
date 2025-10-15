@@ -112,8 +112,13 @@ export default function App() {
     }]);
 
     try {
-      // Start tracking with the Gemini-provided coordinates
+      // Gemini provides coordinates - we need to use them directly without scaling
+      // since Gemini sees the video frames at their native resolution
       if (trackingCanvasRef.current && videoRef.current) {
+        console.log(`📹 Video dimensions: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
+        console.log(`📐 Canvas dimensions: ${trackingCanvasRef.current.width}x${trackingCanvasRef.current.height}`);
+
+        // Use coordinates directly - trackingService will handle any needed scaling
         const box: [number, number, number, number] = [x1, y1, x2, y2];
 
         const trackingId = await videoTracker.startTracking(
