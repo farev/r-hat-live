@@ -3,11 +3,8 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { VideoFeed } from './components/VideoFeed';
 import { Controls } from './components/Controls';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
-import { startSession, stopSession, getCurrentFrame } from './services/geminiService';
-import { highlightObject } from './services/highlightService';
-import { videoTracker } from './services/trackingService';
-import { Sender, TranscriptionEntry, AIState, ActiveHighlight } from './types';
-import { HighlightResult } from './types/tools';
+import { startSession, stopSession } from './services/geminiService';
+import { Sender, TranscriptionEntry, AIState, BoundingBox } from './types';
 
 type Status = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'ERROR';
 
@@ -17,11 +14,10 @@ export default function App() {
   const [transcriptions, setTranscriptions] = useState<TranscriptionEntry[]>([]);
   const [statusMessage, setStatusMessage] = useState('Click the mic to start');
   const [aiState, setAiState] = useState<AIState>('idle');
-  const [activeHighlights, setActiveHighlights] = useState<ActiveHighlight[]>([]);
+  const [boundingBoxes, setBoundingBoxes] = useState<BoundingBox[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const trackingCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const updateStatus = useCallback((message: string, statusOverride?: Status) => {
     setStatusMessage(message);
@@ -32,129 +28,14 @@ export default function App() {
     setTranscriptions(prev => [...prev, entry]);
   }, []);
 
-  const handleHighlight = useCallback(async (objectName: string) => {
-    console.log('🎯 App: Handling highlight for:', objectName);
+  const handleShowBoundingBox = useCallback((box: Omit<BoundingBox, 'id'>) => {
+    const newBox = { ...box, id: Date.now() };
+    setBoundingBoxes(prev => [...prev, newBox]);
 
-    // Add system message about tool usage
-    setTranscriptions(prev => [...prev, {
-      sender: Sender.System,
-      text: `Starting tracking for ${objectName}...`,
-      timestamp: Date.now()
-    }]);
-
-    try {
-      // Capture current frame - pass canvas ref
-      const frameData = await getCurrentFrame(canvasRef.current || undefined);
-      if (!frameData) {
-        throw new Error('Failed to capture current frame');
-      }
-
-      console.log('📸 Frame captured, sending to backend for initial detection...');
-
-      // Call backend API to get initial detection
-      const result: HighlightResult = await highlightObject(frameData, objectName);
-
-      if (!result.success || !result.masks || result.masks.length === 0) {
-        throw new Error(result.error || `No ${objectName} detected in view`);
-      }
-
-      console.log(`✅ Backend returned ${result.masks.length} detections`);
-
-      // Get the first detected bounding box
-      const initialBox = result.masks[0].box as [number, number, number, number];
-
-      // Add system message about result
-      setTranscriptions(prev => [...prev, {
-        sender: Sender.System,
-        text: `Now tracking ${objectName} in real-time`,
-        timestamp: Date.now()
-      }]);
-
-      // Start tracking with canvas overlay
-      if (trackingCanvasRef.current && videoRef.current) {
-        const trackingId = await videoTracker.startTracking(
-          objectName,
-          initialBox,
-          trackingCanvasRef.current,
-          videoRef.current
-        );
-
-        // Add to active highlights (for UI badge)
-        const highlight: ActiveHighlight = {
-          id: trackingId,
-          object_name: objectName,
-          annotated_image: '', // Not used in tracking mode
-          timestamp: Date.now()
-        };
-
-        setActiveHighlights(prev => [...prev, highlight]);
-      }
-
-    } catch (error) {
-      console.error('❌ Highlight error:', error);
-
-      setTranscriptions(prev => [...prev, {
-        sender: Sender.System,
-        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: Date.now()
-      }]);
-    }
-  }, []);
-
-  const handleShowBoundingBox = useCallback(async (objectName: string, x1: number, y1: number, x2: number, y2: number) => {
-    console.log(`🎯 App: Showing bounding box for ${objectName} at [${x1}, ${y1}, ${x2}, ${y2}]`);
-
-    // Add system message
-    setTranscriptions(prev => [...prev, {
-      sender: Sender.System,
-      text: `Displaying bounding box for ${objectName}`,
-      timestamp: Date.now()
-    }]);
-
-    try {
-      // Gemini provides coordinates - we need to use them directly without scaling
-      // since Gemini sees the video frames at their native resolution
-      if (trackingCanvasRef.current && videoRef.current) {
-        console.log(`📹 Video dimensions: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
-        console.log(`📐 Canvas dimensions: ${trackingCanvasRef.current.width}x${trackingCanvasRef.current.height}`);
-
-        // Use coordinates directly - trackingService will handle any needed scaling
-        const box: [number, number, number, number] = [x1, y1, x2, y2];
-
-        const trackingId = await videoTracker.startTracking(
-          objectName,
-          box,
-          trackingCanvasRef.current,
-          videoRef.current
-        );
-
-        // Add to active highlights
-        const highlight: ActiveHighlight = {
-          id: trackingId,
-          object_name: objectName,
-          annotated_image: '',
-          timestamp: Date.now()
-        };
-
-        setActiveHighlights(prev => [...prev, highlight]);
-      }
-    } catch (error) {
-      console.error('❌ Bounding box display error:', error);
-
-      setTranscriptions(prev => [...prev, {
-        sender: Sender.System,
-        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: Date.now()
-      }]);
-    }
-  }, []);
-
-  const removeHighlight = useCallback((id: string) => {
-    // Stop tracking
-    videoTracker.stopTracking();
-
-    // Remove from active highlights
-    setActiveHighlights(prev => prev.filter(h => h.id !== id));
+    // Remove the box after 5 seconds
+    setTimeout(() => {
+      setBoundingBoxes(prev => prev.filter(b => b.id !== newBox.id));
+    }, 5000);
   }, []);
 
   useEffect(() => {
@@ -250,7 +131,6 @@ export default function App() {
           addTranscriptionEntry,
           (msg) => updateStatus(msg, 'ACTIVE'),
           setAiState,
-          handleHighlight,
           handleShowBoundingBox
         );
       }
@@ -274,6 +154,7 @@ export default function App() {
     }
     setStatus('IDLE');
     setAiState('idle');
+    setBoundingBoxes([]);
     updateStatus('Session ended. Click the mic to start again.');
     setTranscriptions(prev => [...prev, {
       sender: Sender.System,
@@ -322,9 +203,7 @@ export default function App() {
               <VideoFeed
                 mediaStream={mediaStream}
                 videoRef={videoRef}
-                highlights={activeHighlights}
-                onDismissHighlight={removeHighlight}
-                trackingCanvasRef={trackingCanvasRef}
+                boundingBoxes={boundingBoxes}
               />
               {!mediaStream && status !== 'CONNECTING' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4">

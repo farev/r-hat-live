@@ -19,3 +19,12 @@ export interface ActiveHighlight {
   annotated_image: string; // base64 encoded
   timestamp: number;
 }
+
+export interface BoundingBox {
+  id: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+}
