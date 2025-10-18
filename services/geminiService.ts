@@ -20,34 +20,18 @@ let frameInterval: number | null = null;
 let nextStartTime = 0;
 const sources = new Set<AudioBufferSourceNode>();
 
-const showBoundingBoxFunctionDeclaration: FunctionDeclaration = {
-  name: 'showBoundingBox',
-  description: 'Draws a bounding box around a specified object in the user\'s camera view.',
+const highlightObjectFunctionDeclaration: FunctionDeclaration = {
+  name: 'highlightObject',
+  description: 'Tracks and highlights a specific object in the user\'s camera view using computer vision. The system will detect the object, create a bounding box around it, and track it across frames.',
   parameters: {
     type: Type.OBJECT,
     properties: {
-      x: {
-        type: Type.NUMBER,
-        description: 'The normalized horizontal coordinate (from 0.0 to 1.0) of the top-left corner of the box, relative to the video width.',
-      },
-      y: {
-        type: Type.NUMBER,
-        description: 'The normalized vertical coordinate (from 0.0 to 1.0) of the top-left corner of the box, relative to the video height.',
-      },
-      width: {
-        type: Type.NUMBER,
-        description: 'The normalized width (from 0.0 to 1.0) of the box, relative to the video width.',
-      },
-      height: {
-        type: Type.NUMBER,
-        description: 'The normalized height (from 0.0 to 1.0) of the box, relative to the video height.',
-      },
-      label: {
+      object_name: {
         type: Type.STRING,
-        description: 'A brief text label for the object inside the box.',
+        description: 'The name or description of the object to track and highlight (e.g., "red drill", "capacitor", "multimeter", "screwdriver"). Be specific if there are multiple similar objects.',
       },
     },
-    required: ['x', 'y', 'width', 'height', 'label'],
+    required: ['object_name'],
   },
 };
 
@@ -58,7 +42,7 @@ export async function startSession(
     onTranscriptionUpdate: (entry: TranscriptionEntry) => void,
     onStatusUpdate: (status: string) => void,
     onAIStateUpdate: (state: AIState) => void,
-    onShowBoundingBox: (box: Omit<BoundingBox, 'id'>) => void,
+    onHighlightObject: (objectName: string) => Promise<void>,
 ): Promise<void> {
     onStatusUpdate("Initializing Gemini...");
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
@@ -128,31 +112,34 @@ export async function startSession(
                 if (message.toolCall) {
                     onAIStateUpdate('using_tool');
                     for (const fc of message.toolCall.functionCalls) {
-                        if (fc.name === 'showBoundingBox') {
-                            const { x, y, width, height, label } = fc.args as { x: number; y: number; width: number; height: number; label: string };
+                        if (fc.name === 'highlightObject') {
+                            const { object_name } = fc.args as { object_name: string };
 
-                            // Basic validation for coordinates
-                            if (x >= 0 && x <= 1 && y >= 0 && y <= 1 && width > 0 && (x + width) <= 1 && height > 0 && (y + height) <= 1) {
-                                onShowBoundingBox({ x, y, width, height, label });
+                            try {
+                                // Call the backend to highlight the object
+                                await onHighlightObject(object_name);
+
+                                // Send success response to Gemini
                                 if (sessionPromise) {
                                     sessionPromise.then((s) => {
                                         s.sendToolResponse({
                                             functionResponses: {
                                                 id: fc.id,
                                                 name: fc.name,
-                                                response: { result: `Drew a box around ${label}` },
+                                                response: { result: `Successfully tracking ${object_name}` },
                                             }
                                         });
                                     });
                                 }
-                            } else {
+                            } catch (error) {
+                                // Send error response to Gemini
                                 if (sessionPromise) {
                                     sessionPromise.then((s) => {
                                         s.sendToolResponse({
                                             functionResponses: {
                                                 id: fc.id,
                                                 name: fc.name,
-                                                response: { result: `Error: Invalid coordinates provided for bounding box.` },
+                                                response: { result: `Error: ${error instanceof Error ? error.message : 'Failed to track object'}` },
                                             }
                                         });
                                     });
@@ -222,8 +209,8 @@ export async function startSession(
             speechConfig: {
                 voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
             },
-            tools: [{ functionDeclarations: [showBoundingBoxFunctionDeclaration] }],
-            systemInstruction: 'You are a friendly and helpful AI assistant that can see and hear. Respond to the user based on what you perceive from their video and audio. Keep your responses concise and conversational. When the user asks you to highlight or show a bounding box around something, use the `showBoundingBox` tool with normalized coordinates (0.0 to 1.0) for x, y, width, and height.',
+            tools: [{ functionDeclarations: [highlightObjectFunctionDeclaration] }],
+            systemInstruction: 'You are a friendly and helpful AI assistant that can see and hear. Respond to the user based on what you perceive from their video and audio. Keep your responses concise and conversational. When the user asks you to highlight, track, or show something in their camera view, use the `highlightObject` tool with a clear description of the object (e.g., "red drill", "capacitor", "multimeter"). The system will automatically detect the object, create a bounding box, and track it across frames.',
         },
     });
 

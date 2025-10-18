@@ -1,15 +1,15 @@
 
 import React, { useEffect } from 'react';
 import { cn } from "@/lib/utils";
-import { BoundingBox } from '../types';
+import { TrackedObject } from '../types';
 
 interface VideoFeedProps {
   mediaStream: MediaStream | null;
   videoRef: React.RefObject<HTMLVideoElement>;
-  boundingBoxes?: BoundingBox[];
+  trackedObjects?: TrackedObject[];
 }
 
-export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, boundingBoxes = [] }) => {
+export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, trackedObjects = [] }) => {
   useEffect(() => {
     if (videoRef.current && mediaStream) {
       videoRef.current.srcObject = mediaStream;
@@ -32,20 +32,26 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, bou
           className="w-full h-full object-cover transform scaleX-[-1]"
         />
 
-        {/* Bounding boxes overlay */}
-        {boundingBoxes.map((box) => (
+        {/* Tracked objects overlay */}
+        {trackedObjects.map((obj) => (
           <div
-            key={box.id}
-            className="absolute border-2 border-yellow-400 z-20 flex justify-center items-center box-border animate-fade-in pointer-events-none"
+            key={obj.tracker_id}
+            className={cn(
+              "absolute border-2 z-20 flex justify-center items-center box-border pointer-events-none transition-all duration-100",
+              obj.status === 'tracking' ? 'border-green-400' : 'border-red-400'
+            )}
             style={{
-              left: `${box.x * 100}%`,
-              top: `${box.y * 100}%`,
-              width: `${box.width * 100}%`,
-              height: `${box.height * 100}%`,
+              left: `${obj.bbox.x * 100}%`,
+              top: `${obj.bbox.y * 100}%`,
+              width: `${obj.bbox.width * 100}%`,
+              height: `${obj.bbox.height * 100}%`,
             }}
           >
-            <span className="absolute -top-6 left-0 bg-yellow-400 text-black text-xs font-bold px-2 py-1 rounded shadow-md">
-              {box.label}
+            <span className={cn(
+              "absolute -top-6 left-0 text-black text-xs font-bold px-2 py-1 rounded shadow-md",
+              obj.status === 'tracking' ? 'bg-green-400' : 'bg-red-400'
+            )}>
+              {obj.label} ({Math.round(obj.confidence * 100)}%)
             </span>
           </div>
         ))}
