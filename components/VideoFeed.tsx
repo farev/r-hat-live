@@ -37,7 +37,7 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, tra
           <div
             key={obj.tracker_id}
             className={cn(
-              "absolute border-2 z-20 flex justify-center items-center box-border pointer-events-none transition-all duration-100",
+              "absolute border-2 z-20 flex justify-center items-center box-border pointer-events-none",
               obj.status === 'tracking' ? 'border-green-400' : 'border-red-400'
             )}
             style={{
@@ -45,10 +45,11 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, tra
               top: `${obj.bbox.y * 100}%`,
               width: `${obj.bbox.width * 100}%`,
               height: `${obj.bbox.height * 100}%`,
+              transition: 'left 0.05s ease-out, top 0.05s ease-out, width 0.05s ease-out, height 0.05s ease-out',
             }}
           >
             <span className={cn(
-              "absolute -top-6 left-0 text-black text-xs font-bold px-2 py-1 rounded shadow-md",
+              "absolute -top-6 left-0 text-black text-xs font-bold px-2 py-1 rounded shadow-md transition-colors duration-200",
               obj.status === 'tracking' ? 'bg-green-400' : 'bg-red-400'
             )}>
               {obj.label} ({Math.round(obj.confidence * 100)}%)

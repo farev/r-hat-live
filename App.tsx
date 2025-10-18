@@ -128,7 +128,7 @@ export default function App() {
       } catch (error) {
         console.error('[TRACKING] Tracking loop error:', error);
       }
-    }, 100); // Update at ~10 FPS
+    }, 50); // Update at ~20 FPS (increased from 100ms/10fps to 50ms/20fps)
   }, []); // Empty deps - only create once
 
   useEffect(() => {
