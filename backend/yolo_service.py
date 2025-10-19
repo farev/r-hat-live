@@ -1,7 +1,8 @@
 """
 YOLO Object Detection Service
 Detects all objects in a frame and returns bounding boxes
-Using YOLOv8 (ultralytics will auto-download on first use)
+Using YOLOv10 (ultralytics will auto-download on first use)
+YOLOv10 features NMS-free training for better multi-object detection
 """
 
 # Fix for PyTorch 2.6 weights_only issue - MUST be set before importing torch
@@ -15,21 +16,22 @@ from ultralytics import YOLO
 from typing import List, Dict, Tuple
 
 class YOLOService:
-    def __init__(self, model_size='s', conf_threshold=0.25):
+    def __init__(self, model_size='s', conf_threshold=0.0075):
         """
         Initialize YOLO model
 
         Args:
-            model_size: Model size ('n', 's', 'm', 'l', 'x')
+            model_size: Model size ('n', 's', 'm', 'b', 'l', 'x')
+                       YOLOv10 adds 'b' (balanced) variant
             conf_threshold: Confidence threshold for detections
         """
         self.conf_threshold = conf_threshold
-        # Use YOLOv8 - ultralytics will auto-download
-        self.model_path = f'yolov8{model_size}.pt'
+        # Use YOLOv10 - NMS-free for better multi-object detection
+        self.model_path = f'yolov10{model_size}.pt'
 
-        print(f"Loading YOLOv8{model_size} model (will auto-download if needed)...")
+        print(f"Loading YOLOv10{model_size} model (will auto-download if needed)...")
         self.model = YOLO(self.model_path)
-        print("YOLO model loaded successfully!")
+        print("YOLOv10 model loaded successfully!")
 
     def detect(self, image: np.ndarray) -> List[Dict]:
         """

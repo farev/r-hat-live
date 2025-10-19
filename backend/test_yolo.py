@@ -1,6 +1,7 @@
 """
-Test YOLO Detection - Visualize all detected objects
-Usage: python test_yolo.py <path_to_image>
+Test YOLOv10 Detection - Visualize all detected objects
+Usage: python test_yolo.py <path_to_image> [model_size] [conf_threshold]
+Model sizes: n, s, m, b, l, x (YOLOv10 adds 'b' for balanced)
 """
 
 import sys
@@ -62,6 +63,7 @@ def main():
         print("  n = nano (fastest, least accurate)")
         print("  s = small (default)")
         print("  m = medium")
+        print("  b = balanced (YOLOv10 only)")
         print("  l = large")
         print("  x = extra large (slowest, most accurate)")
         print("\nExamples:")
@@ -81,11 +83,11 @@ def main():
         print(f"Error: Could not load image from {image_path}")
         sys.exit(1)
 
-    print(f"Initializing YOLOv8{model_size} with confidence threshold {conf_threshold}...")
+    print(f"Initializing YOLOv10{model_size} with confidence threshold {conf_threshold}...")
     yolo_service = get_yolo_service(model_size=model_size)
     yolo_service.conf_threshold = conf_threshold
 
-    print("Running detection...")
+    print("Running YOLOv10 detection (NMS-free for better multi-object detection)...")
     detections = yolo_service.detect(image)
 
     # Draw detections
