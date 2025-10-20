@@ -62,7 +62,7 @@ def init_services():
         yolo_service = get_yolo_service(model_size='s')
 
     if clip_service is None:
-        clip_service = get_clip_service(model_name='ViT-L/14')
+        clip_service = get_clip_service(model_name='ViT-B/32')
 
     if tracker_service is None:
         tracker_service = get_tracker_service()

@@ -13,7 +13,7 @@ import base64
 from io import BytesIO
 
 class CLIPService:
-    def __init__(self, model_name='ViT-L/14', device=None):
+    def __init__(self, model_name='ViT-B/16', device=None):
         """
         Initialize CLIP model
 
