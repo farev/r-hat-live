@@ -1,0 +1,21 @@
+# Gemini Live API Prototype Dependencies
+
+# Google Gemini SDK
+google-genai>=0.3.0
+
+# Video capture and processing
+opencv-python>=4.9.0
+Pillow>=10.0.0
+
+# Audio capture and playback (sounddevice works better on macOS than pyaudio)
+sounddevice>=0.4.6
+numpy>=1.20.0
+
+# UI Framework
+PyQt6>=6.10.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Async support (usually included in Python 3.7+)
+# asyncio (built-in)

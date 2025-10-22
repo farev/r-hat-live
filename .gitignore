@@ -28,3 +28,6 @@ backend/Grounded-SAM-2/custom_video_frames/
 *.njsproj
 *.sln
 *.sw?
+/venv
+.env
+.env*
