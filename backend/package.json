@@ -1,0 +1,13 @@
+{
+  "name": "gemini-bridge-server",
+  "version": "1.0.0",
+  "description": "WebSocket bridge server for Gemini Live API",
+  "main": "gemini_bridge_server.js",
+  "scripts": {
+    "start": "node gemini_bridge_server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^0.2.0",
+    "ws": "^8.14.2"
+  }
+}

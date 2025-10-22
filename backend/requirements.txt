@@ -25,3 +25,9 @@ einops==0.7.0
 
 # Utility
 python-dotenv==1.0.0
+
+# Python Desktop App Dependencies
+google-genai>=0.2.0  # Gemini Live API
+pyaudio>=0.2.13  # Audio capture/playback
+PyQt6>=6.6.0  # GUI framework
+websockets>=12.0  # WebSocket client for bridge
