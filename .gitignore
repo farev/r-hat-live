@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Custom video frames (generated content)
+backend/Grounded-SAM-2/custom_video_frames/
+
+# Model weights
+*.pt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,3 +28,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+/venv
+.env
+.env*

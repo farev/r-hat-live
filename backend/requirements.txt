@@ -7,17 +7,21 @@ python-multipart==0.0.6
 torch>=2.3.1
 torchvision>=0.18.1
 numpy>=1.24.0
-opencv-python>=4.9.0
+opencv-contrib-python>=4.9.0  # Includes legacy trackers (CSRT)
 Pillow>=10.0.0
 
-# Grounded-SAM 2 dependencies
-# Note: Will be installed from GitHub
-supervision>=0.18.0
-transformers>=4.57.0
-addict>=2.4.0
-yapf>=0.43.0
+# YOLOv10 - using ultralytics
+ultralytics==8.1.0
+
+# CLIP
+git+https://github.com/openai/CLIP.git
+ftfy
+regex
+tqdm
+
+# OSTrack dependencies
 timm>=1.0.0
-pycocotools>=2.0.0
+einops==0.7.0
 
 # Utility
 python-dotenv==1.0.0

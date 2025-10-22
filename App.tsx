@@ -3,11 +3,9 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { VideoFeed } from './components/VideoFeed';
 import { Controls } from './components/Controls';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
-import { startSession, stopSession, getCurrentFrame } from './services/geminiService';
-import { highlightObject } from './services/highlightService';
-import { videoTracker } from './services/trackingService';
-import { Sender, TranscriptionEntry, AIState, ActiveHighlight } from './types';
-import { HighlightResult } from './types/tools';
+import { startSession, stopSession } from './services/geminiService';
+import { Sender, TranscriptionEntry, AIState, TrackedObject } from './types';
+import { highlightObject, updateTrackers, clearAllTrackers, canvasToBase64 } from './services/trackingService';
 
 type Status = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'ERROR';
 
@@ -17,11 +15,11 @@ export default function App() {
   const [transcriptions, setTranscriptions] = useState<TranscriptionEntry[]>([]);
   const [statusMessage, setStatusMessage] = useState('Click the mic to start');
   const [aiState, setAiState] = useState<AIState>('idle');
-  const [activeHighlights, setActiveHighlights] = useState<ActiveHighlight[]>([]);
+  const [trackedObjects, setTrackedObjects] = useState<TrackedObject[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const trackingCanvasRef = useRef<HTMLCanvasElement>(null);
+  const trackingIntervalRef = useRef<number | null>(null);
 
   const updateStatus = useCallback((message: string, statusOverride?: Status) => {
     setStatusMessage(message);
@@ -32,82 +30,114 @@ export default function App() {
     setTranscriptions(prev => [...prev, entry]);
   }, []);
 
-  const handleHighlight = useCallback(async (objectName: string) => {
-    console.log('🎯 App: Handling highlight for:', objectName);
+  const handleHighlightObject = useCallback(async (objectName: string) => {
+    if (!canvasRef.current || !videoRef.current) {
+      throw new Error('Video or canvas not ready');
+    }
 
-    // Add system message about tool usage
-    setTranscriptions(prev => [...prev, {
-      sender: Sender.System,
-      text: `Starting tracking for ${objectName}...`,
-      timestamp: Date.now()
-    }]);
+    // Capture current frame
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
 
-    try {
-      // Capture current frame - pass canvas ref
-      const frameData = await getCurrentFrame(canvasRef.current || undefined);
-      if (!frameData) {
-        throw new Error('Failed to capture current frame');
-      }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas context not available');
 
-      console.log('📸 Frame captured, sending to backend for initial detection...');
+    ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+    const imageBase64 = canvasToBase64(canvas);
 
-      // Call backend API to get initial detection
-      const result: HighlightResult = await highlightObject(frameData, objectName);
+    // Call backend to detect and track object
+    const response = await highlightObject(imageBase64, objectName);
 
-      if (!result.success || !result.masks || result.masks.length === 0) {
-        throw new Error(result.error || `No ${objectName} detected in view`);
-      }
+    // Add new tracked object to state
+    const newTrackedObject: TrackedObject = {
+      tracker_id: response.tracker_id,
+      bbox: response.bbox,
+      label: response.label,
+      confidence: response.confidence,
+      status: 'tracking',
+    };
 
-      console.log(`✅ Backend returned ${result.masks.length} detections`);
+    setTrackedObjects(prev => [...prev, newTrackedObject]);
 
-      // Get the first detected bounding box
-      const initialBox = result.masks[0].box as [number, number, number, number];
-
-      // Add system message about result
-      setTranscriptions(prev => [...prev, {
-        sender: Sender.System,
-        text: `Now tracking ${objectName} in real-time`,
-        timestamp: Date.now()
-      }]);
-
-      // Start tracking with canvas overlay
-      if (trackingCanvasRef.current && videoRef.current) {
-        const trackingId = await videoTracker.startTracking(
-          objectName,
-          initialBox,
-          trackingCanvasRef.current,
-          videoRef.current
-        );
-
-        // Add to active highlights (for UI badge)
-        const highlight: ActiveHighlight = {
-          id: trackingId,
-          object_name: objectName,
-          annotated_image: '', // Not used in tracking mode
-          timestamp: Date.now()
-        };
-
-        setActiveHighlights(prev => [...prev, highlight]);
-      }
-
-    } catch (error) {
-      console.error('❌ Highlight error:', error);
-
-      setTranscriptions(prev => [...prev, {
-        sender: Sender.System,
-        text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: Date.now()
-      }]);
+    // Start tracking loop if not already running
+    if (!trackingIntervalRef.current) {
+      startTrackingLoop();
     }
   }, []);
 
-  const removeHighlight = useCallback((id: string) => {
-    // Stop tracking
-    videoTracker.stopTracking();
+  const startTrackingLoop = useCallback(() => {
+    if (trackingIntervalRef.current) return;
 
-    // Remove from active highlights
-    setActiveHighlights(prev => prev.filter(h => h.id !== id));
-  }, []);
+    console.log('[TRACKING] Starting tracking loop at 10 FPS');
+
+    trackingIntervalRef.current = window.setInterval(async () => {
+      if (!canvasRef.current || !videoRef.current) {
+        return;
+      }
+
+      try {
+        // Capture current frame
+        const canvas = canvasRef.current;
+        const video = videoRef.current;
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+        const imageBase64 = canvasToBase64(canvas);
+
+        // Update all trackers (use functional update to get latest state)
+        setTrackedObjects(prev => {
+          if (prev.length === 0) return prev;
+
+          // Get current tracker IDs
+          const trackerIds = prev.map(obj => obj.tracker_id);
+
+          // Call update API
+          updateTrackers(imageBase64, trackerIds)
+            .then(updates => {
+              console.log('[TRACKING] Received updates for', Object.keys(updates).length, 'trackers');
+
+              // Update state with new positions
+              setTrackedObjects(current =>
+                current.map(obj => {
+                  const update = updates[obj.tracker_id];
+                  if (update) {
+                    console.log(`[TRACKING] Updated ${obj.tracker_id}: bbox=${JSON.stringify(update.bbox)}, status=${update.status}`);
+                    return {
+                      ...obj,
+                      bbox: update.bbox,
+                      confidence: update.confidence,
+                      status: update.status,
+                    };
+                  }
+                  return obj;
+                }).filter(obj => obj.status === 'tracking') // Remove lost objects
+              );
+            })
+            .catch(error => {
+              console.error('[TRACKING] Update error:', error);
+            });
+
+          return prev; // Return unchanged for this update
+        });
+      } catch (error) {
+        console.error('[TRACKING] Tracking loop error:', error);
+      }
+    }, 50); // Update at ~20 FPS (increased from 100ms/10fps to 50ms/20fps)
+  }, []); // Empty deps - only create once
+
+  useEffect(() => {
+    // Stop tracking loop if no objects
+    if (trackedObjects.length === 0 && trackingIntervalRef.current) {
+      clearInterval(trackingIntervalRef.current);
+      trackingIntervalRef.current = null;
+    }
+  }, [trackedObjects]);
 
   useEffect(() => {
     return () => {
@@ -202,7 +232,7 @@ export default function App() {
           addTranscriptionEntry,
           (msg) => updateStatus(msg, 'ACTIVE'),
           setAiState,
-          handleHighlight
+          handleHighlightObject
         );
       }
     } catch (error) {
@@ -217,14 +247,30 @@ export default function App() {
     }
   };
 
-  const handleStop = () => {
+  const handleStop = async () => {
     stopSession();
+
+    // Stop tracking loop
+    if (trackingIntervalRef.current) {
+      clearInterval(trackingIntervalRef.current);
+      trackingIntervalRef.current = null;
+    }
+
+    // Clear all trackers from backend
+    try {
+      await clearAllTrackers();
+    } catch (error) {
+      console.error('Failed to clear trackers:', error);
+    }
+
     if (mediaStream) {
       mediaStream.getTracks().forEach(track => track.stop());
       setMediaStream(null);
     }
+
     setStatus('IDLE');
     setAiState('idle');
+    setTrackedObjects([]);
     updateStatus('Session ended. Click the mic to start again.');
     setTranscriptions(prev => [...prev, {
       sender: Sender.System,
@@ -273,9 +319,7 @@ export default function App() {
               <VideoFeed
                 mediaStream={mediaStream}
                 videoRef={videoRef}
-                highlights={activeHighlights}
-                onDismissHighlight={removeHighlight}
-                trackingCanvasRef={trackingCanvasRef}
+                trackedObjects={trackedObjects}
               />
               {!mediaStream && status !== 'CONNECTING' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4">

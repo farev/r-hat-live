@@ -1,18 +1,15 @@
 
 import React, { useEffect } from 'react';
 import { cn } from "@/lib/utils";
-import { HighlightOverlay } from './HighlightOverlay';
-import { ActiveHighlight } from '../types';
+import { TrackedObject } from '../types';
 
 interface VideoFeedProps {
   mediaStream: MediaStream | null;
   videoRef: React.RefObject<HTMLVideoElement>;
-  highlights?: ActiveHighlight[];
-  onDismissHighlight?: (id: string) => void;
-  trackingCanvasRef?: React.RefObject<HTMLCanvasElement>;
+  trackedObjects?: TrackedObject[];
 }
 
-export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, highlights = [], onDismissHighlight, trackingCanvasRef }) => {
+export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, trackedObjects = [] }) => {
   useEffect(() => {
     if (videoRef.current && mediaStream) {
       videoRef.current.srcObject = mediaStream;
@@ -35,35 +32,30 @@ export const VideoFeed: React.FC<VideoFeedProps> = ({ mediaStream, videoRef, hig
           className="w-full h-full object-cover transform scaleX-[-1]"
         />
 
-        {/* Canvas overlay for tracking annotations */}
-        {trackingCanvasRef && (
-          <canvas
-            ref={trackingCanvasRef}
-            className="absolute inset-0 w-full h-full pointer-events-none transform scaleX-[-1]"
-            style={{ zIndex: 5 }}
-          />
-        )}
-
-        {/* Active tracking badges */}
-        {highlights.length > 0 && onDismissHighlight && (
-          <div className="absolute top-2 left-2 flex flex-col gap-2 pointer-events-auto" style={{ zIndex: 10 }}>
-            {highlights.map((highlight) => (
-              <div
-                key={highlight.id}
-                className="flex items-center gap-2 bg-purple-600/90 text-white px-3 py-1 rounded-full text-xs font-medium"
-              >
-                <span>Tracking: {highlight.object_name}</span>
-                <button
-                  onClick={() => onDismissHighlight(highlight.id)}
-                  className="hover:bg-white/20 rounded-full w-4 h-4 flex items-center justify-center transition-colors"
-                  aria-label="Stop tracking"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+        {/* Tracked objects overlay */}
+        {trackedObjects.map((obj) => (
+          <div
+            key={obj.tracker_id}
+            className={cn(
+              "absolute border-2 z-20 flex justify-center items-center box-border pointer-events-none",
+              obj.status === 'tracking' ? 'border-green-400' : 'border-red-400'
+            )}
+            style={{
+              left: `${obj.bbox.x * 100}%`,
+              top: `${obj.bbox.y * 100}%`,
+              width: `${obj.bbox.width * 100}%`,
+              height: `${obj.bbox.height * 100}%`,
+              transition: 'left 0.05s ease-out, top 0.05s ease-out, width 0.05s ease-out, height 0.05s ease-out',
+            }}
+          >
+            <span className={cn(
+              "absolute -top-6 left-0 text-black text-xs font-bold px-2 py-1 rounded shadow-md transition-colors duration-200",
+              obj.status === 'tracking' ? 'bg-green-400' : 'bg-red-400'
+            )}>
+              {obj.label} ({Math.round(obj.confidence * 100)}%)
+            </span>
           </div>
-        )}
+        ))}
 
         {/* Enhanced inner border */}
         <div className="pointer-events-none absolute inset-0 ring-2 ring-[rgba(255,255,255,0.12)] rounded-xl"></div>

@@ -19,3 +19,25 @@ export interface ActiveHighlight {
   annotated_image: string; // base64 encoded
   timestamp: number;
 }
+
+export interface BoundingBox {
+  id: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+}
+
+export interface TrackedObject {
+  tracker_id: string;
+  bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  label: string;
+  confidence: number;
+  status: 'tracking' | 'lost';
+}

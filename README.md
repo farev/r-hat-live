@@ -1,7 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="R-Hat Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # R-Hat - AI Vision Chat Assistant
 
 R-Hat is a real-time AI assistant that can see, hear, and interact with you through live video and audio. Built with Google's Gemini 2.5 Flash with native audio preview, R-Hat provides an immersive conversational experience with web search capabilities.
