@@ -3,15 +3,23 @@ Main API Server for R-Hat Object Tracking
 Combines YOLOv10, CLIP, and CSRT tracking
 """
 
+import os
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import uvicorn
+import requests
+from dotenv import load_dotenv
 
 from yolo_service import get_yolo_service
 from clip_service import get_clip_service
 from tracker_service import get_tracker_service, decode_image
+from image_service import get_image_service
+
+# Load environment variables from backend/.env for local development
+load_dotenv()
 
 app = FastAPI(title="R-Hat Tracking API")
 
@@ -47,11 +55,33 @@ class TrackUpdateResponse(BaseModel):
 class RemoveTrackerRequest(BaseModel):
     tracker_id: str
 
+class ImageRequest(BaseModel):
+    query: str
+
+class ImageResponse(BaseModel):
+    image_base64: str
+    description: str
+    attribution: str
+
+class YouTubeSearchRequest(BaseModel):
+    query: str
+    timestamp: Optional[int] = 0
+
+class YouTubeSearchResponse(BaseModel):
+    video_id: str
+    title: str
+    url: str
+    start_time: int
+    channel_title: Optional[str] = None
+    description: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+
 
 # Global service instances (initialized on first request)
 yolo_service = None
 clip_service = None
 tracker_service = None
+image_service = None
 
 
 def init_services():
@@ -156,6 +186,59 @@ async def highlight_object(request: HighlightRequest):
         print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def fetch_youtube_video(query: str) -> Dict:
+    """Fetch the first YouTube video result for a query."""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="YouTube search is not configured. Set the YOUTUBE_API_KEY environment variable."
+        )
+
+    params = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "maxResults": 1,
+        "key": api_key,
+        "safeSearch": "moderate",
+        "videoEmbeddable": "true",
+    }
+
+    try:
+        response = requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params=params,
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"YouTube API request failed: {exc}"
+        ) from exc
+
+    data = response.json()
+    items = data.get("items", [])
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No YouTube videos found for '{query}'."
+        )
+
+    item = items[0]
+    snippet = item.get("snippet", {})
+    thumbnails = snippet.get("thumbnails", {})
+    high_thumb = thumbnails.get("high") or thumbnails.get("medium") or thumbnails.get("default") or {}
+
+    return {
+        "video_id": item["id"]["videoId"],
+        "title": snippet.get("title", "YouTube Video"),
+        "channel_title": snippet.get("channelTitle"),
+        "description": snippet.get("description"),
+        "thumbnail_url": high_thumb.get("url"),
+    }
+
 
 @app.post("/track/update", response_model=TrackUpdateResponse)
 async def update_trackers(request: TrackUpdateRequest):
@@ -199,6 +282,23 @@ async def remove_tracker(request: RemoveTrackerRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/youtube/search", response_model=YouTubeSearchResponse)
+async def youtube_search(request: YouTubeSearchRequest):
+    """Search YouTube for a video that matches the user's query."""
+    video = fetch_youtube_video(request.query)
+    start_time = request.timestamp or 0
+
+    return YouTubeSearchResponse(
+        video_id=video["video_id"],
+        title=video["title"],
+        channel_title=video.get("channel_title"),
+        description=video.get("description"),
+        thumbnail_url=video.get("thumbnail_url"),
+        url=f"https://www.youtube.com/watch?v={video['video_id']}",
+        start_time=start_time if start_time >= 0 else 0,
+    )
+
+
 @app.post("/track/clear")
 async def clear_all_trackers():
     """Remove all trackers"""
@@ -210,6 +310,33 @@ async def clear_all_trackers():
         return {"success": True, "message": "All trackers removed"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/fetch-image", response_model=ImageResponse)
+async def fetch_image(request: ImageRequest):
+    """
+    Fetch an image based on a search query
+
+    Args:
+        query: Search query for the image
+
+    Returns:
+        Base64 encoded image with description and attribution
+    """
+    try:
+        global image_service
+        if image_service is None:
+            image_service = get_image_service()
+
+        result = image_service.get_image(request.query)
+        return ImageResponse(
+            image_base64=result["image_base64"],
+            description=result["description"],
+            attribution=result["attribution"]
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Image fetch failed: {str(e)}")
 
 
 @app.get("/status")

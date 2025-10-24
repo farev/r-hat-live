@@ -25,3 +25,6 @@ einops==0.7.0
 
 # Utility
 python-dotenv==1.0.0
+
+# External API clients
+requests>=2.31.0
