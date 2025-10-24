@@ -45,7 +45,7 @@ export interface ToolDeclaration {
 // Highlight tool declaration following Gemini's function calling schema
 export const highlightToolDeclaration: ToolDeclaration = {
   name: "highlight_object",
-  description: "Highlights and identifies objects in the camera view by drawing bounding boxes and segmentation masks around them. Use this when the user asks to show, highlight, point out, or locate specific objects.",
+  description: "Highlights and identifies objects in the camera view by drawing bounding boxes around them. Use this when the user asks to show, highlight, point out, or locate specific objects.",
   parameters: {
     type: "object",
     properties: {
@@ -57,3 +57,36 @@ export const highlightToolDeclaration: ToolDeclaration = {
     required: ["object_name"]
   }
 };
+
+// Image display tool specific types
+export interface DisplayImageArgs {
+  query: string;
+}
+
+export interface DisplayedImage {
+  id: string;
+  image_base64: string;
+  description: string;
+  attribution: string;
+}
+
+// YouTube tool specific types
+export interface PlayYouTubeArgs {
+  query: string;
+  timestamp?: number; // seconds
+}
+
+export interface YouTubeVideo {
+  video_id: string;
+  title: string;
+  url: string;
+  start_time: number;
+  channel_title?: string;
+  description?: string;
+  thumbnail_url?: string;
+}
+
+export interface YouTubeToolResult {
+  video: YouTubeVideo;
+  rawResponse?: any;
+}

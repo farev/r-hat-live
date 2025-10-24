@@ -1,7 +1,9 @@
 // FIX: `LiveSession` is not an exported member of `@google/genai`.
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from "@google/genai";
 import { decode, decodeAudioData, createPcmBlob, blobToBase64 } from '../utils/audioUtils';
-import { Sender, TranscriptionEntry, BoundingBox, AIState } from '../types';
+import { Sender, TranscriptionEntry, AIState } from '../types';
+import { PlayYouTubeArgs, YouTubeVideo } from '../types/tools';
+import { searchYouTubeVideo } from './youtubeService';
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -35,6 +37,40 @@ const highlightObjectFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
+const displayImageFunctionDeclaration: FunctionDeclaration = {
+  name: 'displayImage',
+  description: 'Displays an image in the AR overlay as a floating panel. Use this when the user asks to show, display, or pull up an image of something (e.g., "show me an image of a circuit board", "display a picture of Arduino", "pull up a diagram of a transistor").',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: {
+        type: Type.STRING,
+        description: 'A search query describing the image to display (e.g., "circuit board", "Arduino Uno", "NPN transistor diagram").',
+      },
+    },
+    required: ['query'],
+  },
+};
+
+const getVideoFunctionDeclaration: FunctionDeclaration = {
+  name: 'getVideo',
+  description: 'Searches YouTube for a relevant instructional video and returns a link that can be played from a specific timestamp. Use this when the user asks to watch or learn something from a video.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: {
+        type: Type.STRING,
+        description: 'Search terms that describe the desired video (e.g., "cook carrots tutorial").',
+      },
+      timestamp: {
+        type: Type.NUMBER,
+        description: 'Optional start time in seconds.',
+      },
+    },
+    required: ['query'],
+  },
+};
+
 
 export async function startSession(
     videoElement: HTMLVideoElement,
@@ -43,6 +79,8 @@ export async function startSession(
     onStatusUpdate: (status: string) => void,
     onAIStateUpdate: (state: AIState) => void,
     onHighlightObject: (objectName: string) => Promise<void>,
+    onDisplayImage: (query: string) => Promise<void>,
+    onPlayYouTubeVideo: (video: YouTubeVideo) => void,
 ): Promise<void> {
     onStatusUpdate("Initializing Gemini...");
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
@@ -111,7 +149,14 @@ export async function startSession(
             onmessage: async (message: LiveServerMessage) => {
                 if (message.toolCall) {
                     onAIStateUpdate('using_tool');
+
+                    // Debug: Log all tool calls
+                    console.log('🔧 [TOOL CALL] Agent is using tools:', message.toolCall.functionCalls.length);
+
                     for (const fc of message.toolCall.functionCalls) {
+                        console.log(`🔧 [TOOL CALL] Tool: ${fc.name}`);
+                        console.log(`🔧 [TOOL CALL] Parameters:`, JSON.stringify(fc.args, null, 2));
+
                         if (fc.name === 'highlightObject') {
                             const { object_name } = fc.args as { object_name: string };
 
@@ -120,6 +165,7 @@ export async function startSession(
                                 await onHighlightObject(object_name);
 
                                 // Send success response to Gemini
+                                console.log(`✅ [TOOL CALL] ${fc.name} succeeded`);
                                 if (sessionPromise) {
                                     sessionPromise.then((s) => {
                                         s.sendToolResponse({
@@ -133,6 +179,7 @@ export async function startSession(
                                 }
                             } catch (error) {
                                 // Send error response to Gemini
+                                console.error(`❌ [TOOL CALL] ${fc.name} failed:`, error);
                                 if (sessionPromise) {
                                     sessionPromise.then((s) => {
                                         s.sendToolResponse({
@@ -141,6 +188,98 @@ export async function startSession(
                                                 name: fc.name,
                                                 response: { result: `Error: ${error instanceof Error ? error.message : 'Failed to track object'}` },
                                             }
+                                        });
+                                    });
+                                }
+                            }
+                        } else if (fc.name === 'displayImage') {
+                            const { query } = fc.args as { query: string };
+
+                            try {
+                                // Call the display image function
+                                await onDisplayImage(query);
+
+                                // Send success response to Gemini
+                                console.log(`✅ [TOOL CALL] ${fc.name} succeeded`);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: { result: `Successfully displayed image for "${query}"` },
+                                            }
+                                        });
+                                    });
+                                }
+                            } catch (error) {
+                                // Send error response to Gemini
+                                console.error(`❌ [TOOL CALL] ${fc.name} failed:`, error);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: { result: `Error: ${error instanceof Error ? error.message : 'Failed to display image'}` },
+                                            }
+                                        });
+                                    });
+                                }
+                            }
+                        } else if (fc.name === 'getVideo') {
+                            const { query, timestamp } = fc.args as PlayYouTubeArgs;
+
+                            try {
+                                let startTime: number | undefined;
+
+                                if (typeof timestamp === 'number') {
+                                    startTime = timestamp;
+                                } else if (timestamp !== undefined) {
+                                    const numericTimestamp = Number(timestamp);
+                                    if (Number.isFinite(numericTimestamp) && numericTimestamp >= 0) {
+                                        startTime = numericTimestamp;
+                                    }
+                                }
+
+                                const video = await searchYouTubeVideo(query, startTime);
+
+                                onPlayYouTubeVideo(video);
+
+                                console.log(`✅ [TOOL CALL] ${fc.name} succeeded`);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: {
+                                                        video_id: video.video_id,
+                                                        title: video.title,
+                                                        url: video.url,
+                                                        start_time: video.start_time,
+                                                        channel_title: video.channel_title,
+                                                    },
+                                                },
+                                            },
+                                        });
+                                    });
+                                }
+                            } catch (error) {
+                                console.error(`❌ [TOOL CALL] ${fc.name} failed:`, error);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: `Error: ${
+                                                        error instanceof Error ? error.message : 'Failed to fetch video'
+                                                    }`,
+                                                },
+                                            },
                                         });
                                     });
                                 }
@@ -209,8 +348,11 @@ export async function startSession(
             speechConfig: {
                 voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
             },
-            tools: [{ functionDeclarations: [highlightObjectFunctionDeclaration] }],
-            systemInstruction: 'You are a friendly and helpful AI assistant that can see and hear. Respond to the user based on what you perceive from their video and audio. Keep your responses concise and conversational. When the user asks you to highlight, track, or show something in their camera view, use the `highlightObject` tool with a clear description of the object (e.g., "red drill", "capacitor", "multimeter"). The system will automatically detect the object, create a bounding box, and track it across frames.',
+            tools: [
+                { functionDeclarations: [highlightObjectFunctionDeclaration, displayImageFunctionDeclaration, getVideoFunctionDeclaration] },
+                { googleSearch: {} }
+            ],
+            systemInstruction: 'You are R-Hat, a friendly and helpful AI assistant that can see and hear. Respond to the user based on what you perceive from their video and audio. Keep your responses concise and conversational. When the user asks you to highlight, track, or show something in their camera view, use the `highlightObject` tool with a clear description of the object (e.g., "red drill", "capacitor", "multimeter"). The system will automatically detect the object, create a bounding box, and track it across frames. When the user asks to see, show, or display an image of something, use the `displayImage` tool to fetch and display the image in the AR overlay. When the user wants to watch a tutorial or needs a video demonstration, call the `getVideo` tool with a descriptive query and include any requested start timestamp so the correct YouTube video can be played in the interface.',
         },
     });
 

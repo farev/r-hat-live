@@ -3,9 +3,13 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { VideoFeed } from './components/VideoFeed';
 import { Controls } from './components/Controls';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
+import { ImageOverlay } from './components/ImageOverlay';
+import { YouTubePlayer } from './components/YouTubePlayer';
 import { startSession, stopSession } from './services/geminiService';
 import { Sender, TranscriptionEntry, AIState, TrackedObject } from './types';
+import { DisplayedImage, YouTubeVideo } from './types/tools';
 import { highlightObject, updateTrackers, clearAllTrackers, canvasToBase64 } from './services/trackingService';
+import { fetchImage } from './services/imageService';
 
 type Status = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'ERROR';
 
@@ -16,6 +20,8 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('Click the mic to start');
   const [aiState, setAiState] = useState<AIState>('idle');
   const [trackedObjects, setTrackedObjects] = useState<TrackedObject[]>([]);
+  const [displayedImages, setDisplayedImages] = useState<DisplayedImage[]>([]);
+  const [currentVideo, setCurrentVideo] = useState<YouTubeVideo | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,6 +71,37 @@ export default function App() {
     if (!trackingIntervalRef.current) {
       startTrackingLoop();
     }
+  }, []);
+
+  const handleDisplayImage = useCallback(async (query: string) => {
+    try {
+      const imageData = await fetchImage(query);
+
+      const newImage: DisplayedImage = {
+        id: `img-${Date.now()}`,
+        ...imageData,
+      };
+
+      setDisplayedImages(prev => [...prev, newImage]);
+    } catch (error) {
+      console.error('Display image error:', error);
+      throw error;
+    }
+  }, []);
+
+  const handlePlayYouTubeVideo = useCallback((video: YouTubeVideo) => {
+    const safeStart = Number.isFinite(video.start_time) && video.start_time >= 0
+      ? Math.floor(video.start_time)
+      : 0;
+
+    setCurrentVideo({
+      ...video,
+      start_time: safeStart,
+    });
+  }, []);
+
+  const handleClearVideo = useCallback(() => {
+    setCurrentVideo(null);
   }, []);
 
   const startTrackingLoop = useCallback(() => {
@@ -232,7 +269,9 @@ export default function App() {
           addTranscriptionEntry,
           (msg) => updateStatus(msg, 'ACTIVE'),
           setAiState,
-          handleHighlightObject
+          handleHighlightObject,
+          handleDisplayImage,
+          handlePlayYouTubeVideo
         );
       }
     } catch (error) {
@@ -249,6 +288,7 @@ export default function App() {
 
   const handleStop = async () => {
     stopSession();
+    handleClearVideo();
 
     // Stop tracking loop
     if (trackingIntervalRef.current) {
@@ -271,6 +311,7 @@ export default function App() {
     setStatus('IDLE');
     setAiState('idle');
     setTrackedObjects([]);
+    setDisplayedImages([]);
     updateStatus('Session ended. Click the mic to start again.');
     setTranscriptions(prev => [...prev, {
       sender: Sender.System,
@@ -281,6 +322,12 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col font-sans hud-safe">
+      {/* Image Overlay */}
+      <ImageOverlay
+        images={displayedImages}
+        onClose={(id) => setDisplayedImages(prev => prev.filter(img => img.id !== id))}
+      />
+
       {/* Fixed Header */}
       <header className="flex justify-between items-start p-4 flex-shrink-0">
         {/* Empty space - Top Left */}
@@ -331,6 +378,10 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {currentVideo && (
+              <YouTubePlayer video={currentVideo} onClose={handleClearVideo} />
+            )}
 
             <div>
               <Controls status={status} aiState={aiState} onStart={handleStart} onStop={handleStop} />
