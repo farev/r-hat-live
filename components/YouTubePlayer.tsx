@@ -1,12 +1,14 @@
 import React, { useMemo } from 'react';
+import { cn } from "@/lib/utils";
 import { YouTubeVideo } from '../types/tools';
 
 interface YouTubePlayerProps {
   video: YouTubeVideo;
   onClose: () => void;
+  className?: string;
 }
 
-export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({ video, onClose }) => {
+export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({ video, onClose, className }) => {
   const startTime = Math.max(0, Math.floor(video.start_time ?? 0));
 
   const embedSrc = useMemo(() => {
@@ -21,7 +23,12 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({ video, onClose }) 
   }, [video.video_id, startTime]);
 
   return (
-    <div className="hud-elev rounded-2xl overflow-hidden relative w-300 border border-white/10 bg-black/80 backdrop-blur">
+    <div
+      className={cn(
+        "hud-elev rounded-2xl overflow-hidden relative border border-white/10 bg-black/80 backdrop-blur w-full max-w-sm",
+        className
+      )}
+    >
       <button
         type="button"
         onClick={onClose}

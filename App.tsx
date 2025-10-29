@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { VideoFeed } from './components/VideoFeed';
 import { Controls } from './components/Controls';
@@ -8,7 +7,7 @@ import { YouTubePlayer } from './components/YouTubePlayer';
 import { startSession, stopSession } from './services/geminiService';
 import { Sender, TranscriptionEntry, AIState, TrackedObject } from './types';
 import { DisplayedImage, YouTubeVideo } from './types/tools';
-import { highlightObject, updateTrackers, clearAllTrackers, canvasToBase64 } from './services/trackingService';
+import { highlightObject, updateTrackers, clearAllTrackers, removeTracker, canvasToBase64 } from './services/trackingService';
 import { fetchImage } from './services/imageService';
 
 type Status = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'ERROR';
@@ -34,74 +33,6 @@ export default function App() {
 
   const addTranscriptionEntry = useCallback((entry: TranscriptionEntry) => {
     setTranscriptions(prev => [...prev, entry]);
-  }, []);
-
-  const handleHighlightObject = useCallback(async (objectName: string) => {
-    if (!canvasRef.current || !videoRef.current) {
-      throw new Error('Video or canvas not ready');
-    }
-
-    // Capture current frame
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas context not available');
-
-    ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-    const imageBase64 = canvasToBase64(canvas);
-
-    // Call backend to detect and track object
-    const response = await highlightObject(imageBase64, objectName);
-
-    // Add new tracked object to state
-    const newTrackedObject: TrackedObject = {
-      tracker_id: response.tracker_id,
-      bbox: response.bbox,
-      label: response.label,
-      confidence: response.confidence,
-      status: 'tracking',
-    };
-
-    setTrackedObjects(prev => [...prev, newTrackedObject]);
-
-    // Start tracking loop if not already running
-    if (!trackingIntervalRef.current) {
-      startTrackingLoop();
-    }
-  }, []);
-
-  const handleDisplayImage = useCallback(async (query: string) => {
-    try {
-      const imageData = await fetchImage(query);
-
-      const newImage: DisplayedImage = {
-        id: `img-${Date.now()}`,
-        ...imageData,
-      };
-
-      setDisplayedImages(prev => [...prev, newImage]);
-    } catch (error) {
-      console.error('Display image error:', error);
-      throw error;
-    }
-  }, []);
-
-  const handlePlayYouTubeVideo = useCallback((video: YouTubeVideo) => {
-    const safeStart = Number.isFinite(video.start_time) && video.start_time >= 0
-      ? Math.floor(video.start_time)
-      : 0;
-
-    setCurrentVideo({
-      ...video,
-      start_time: safeStart,
-    });
-  }, []);
-
-  const handleClearVideo = useCallback(() => {
-    setCurrentVideo(null);
   }, []);
 
   const startTrackingLoop = useCallback(() => {
@@ -167,6 +98,89 @@ export default function App() {
       }
     }, 50); // Update at ~20 FPS (increased from 100ms/10fps to 50ms/20fps)
   }, []); // Empty deps - only create once
+
+  const handleHighlightObject = useCallback(async (objectName: string, trackingDurationSeconds?: number) => {
+    if (!canvasRef.current || !videoRef.current) {
+      throw new Error('Video or canvas not ready');
+    }
+
+    // Capture current frame
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas context not available');
+
+    ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+    const imageBase64 = canvasToBase64(canvas);
+
+    // Call backend to detect and track object
+    const response = await highlightObject(imageBase64, objectName);
+    const trackerId = response.tracker_id;
+
+    // Add new tracked object to state
+    const newTrackedObject: TrackedObject = {
+      tracker_id: trackerId,
+      bbox: response.bbox,
+      label: response.label,
+      confidence: response.confidence,
+      status: 'tracking',
+    };
+
+    setTrackedObjects(prev => [...prev, newTrackedObject]);
+
+    // Schedule tracker removal if a duration is provided
+    if (trackingDurationSeconds && trackingDurationSeconds > 0) {
+      const durationMs = Math.round(trackingDurationSeconds * 1000);
+      window.setTimeout(async () => {
+        try {
+          await removeTracker(trackerId);
+        } catch (error) {
+          console.error(`[TRACKING] Failed to remove tracker ${trackerId}:`, error);
+        } finally {
+          setTrackedObjects(current => current.filter(obj => obj.tracker_id !== trackerId));
+        }
+      }, durationMs);
+    }
+
+    // Start tracking loop if not already running
+    if (!trackingIntervalRef.current) {
+      startTrackingLoop();
+    }
+  }, [startTrackingLoop]);
+
+  const handleDisplayImage = useCallback(async (query: string) => {
+    try {
+      const imageData = await fetchImage(query);
+
+      const newImage: DisplayedImage = {
+        id: `img-${Date.now()}`,
+        ...imageData,
+      };
+
+      setDisplayedImages(prev => [...prev, newImage]);
+    } catch (error) {
+      console.error('Display image error:', error);
+      throw error;
+    }
+  }, []);
+
+  const handlePlayYouTubeVideo = useCallback((video: YouTubeVideo) => {
+    const safeStart = Number.isFinite(video.start_time) && video.start_time >= 0
+      ? Math.floor(video.start_time)
+      : 0;
+
+    setCurrentVideo({
+      ...video,
+      start_time: safeStart,
+    });
+  }, []);
+
+  const handleClearVideo = useCallback(() => {
+    setCurrentVideo(null);
+  }, []);
 
   useEffect(() => {
     // Stop tracking loop if no objects
@@ -321,7 +335,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen flex flex-col font-sans hud-safe">
+    <div className="h-screen flex flex-col font-sans hud-safe relative">
       {/* Image Overlay */}
       <ImageOverlay
         images={displayedImages}
@@ -379,10 +393,6 @@ export default function App() {
               )}
             </div>
 
-            {currentVideo && (
-              <YouTubePlayer video={currentVideo} onClose={handleClearVideo} />
-            )}
-
             <div>
               <Controls status={status} aiState={aiState} onStart={handleStart} onStop={handleStop} />
             </div>
@@ -403,6 +413,12 @@ export default function App() {
       </div>
 
       <canvas ref={canvasRef} className="hidden"></canvas>
+
+      {currentVideo && (
+        <div className="fixed bottom-6 right-6 w-72 z-40">
+          <YouTubePlayer video={currentVideo} onClose={handleClearVideo} />
+        </div>
+      )}
     </div>
   );
 }

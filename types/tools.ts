@@ -18,6 +18,7 @@ export interface FunctionResponse {
 // Highlight tool specific types
 export interface HighlightToolArgs {
   object_name: string;
+  tracking_duration_seconds?: number;
 }
 
 export interface HighlightResult {
@@ -52,7 +53,11 @@ export const highlightToolDeclaration: ToolDeclaration = {
       object_name: {
         type: "string",
         description: "The name of the object to highlight in the camera view (e.g., 'cup', 'laptop', 'person', 'phone')"
-      }
+      },
+      tracking_duration_seconds: {
+        type: "number",
+        description: "Optional duration in seconds to keep the tracker active. Use shorter durations (2-5s) for quick callouts and longer ones (10-30s) when the user needs more time with the object."
+      },
     },
     required: ["object_name"]
   }

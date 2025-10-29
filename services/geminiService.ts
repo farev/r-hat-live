@@ -4,6 +4,7 @@ import { decode, decodeAudioData, createPcmBlob, blobToBase64 } from '../utils/a
 import { Sender, TranscriptionEntry, AIState } from '../types';
 import { PlayYouTubeArgs, YouTubeVideo } from '../types/tools';
 import { searchYouTubeVideo } from './youtubeService';
+import { SYSTEM_INSTRUCTION } from './systemInstruction';
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -31,6 +32,10 @@ const highlightObjectFunctionDeclaration: FunctionDeclaration = {
       object_name: {
         type: Type.STRING,
         description: 'The name or description of the object to track and highlight (e.g., "red drill", "capacitor", "multimeter", "screwdriver"). Be specific if there are multiple similar objects.',
+      },
+      tracking_duration_seconds: {
+        type: Type.NUMBER,
+        description: 'Optional duration in seconds to keep the tracker active. Use shorter durations for quick callouts and longer durations when the user needs sustained guidance.',
       },
     },
     required: ['object_name'],
@@ -78,7 +83,7 @@ export async function startSession(
     onTranscriptionUpdate: (entry: TranscriptionEntry) => void,
     onStatusUpdate: (status: string) => void,
     onAIStateUpdate: (state: AIState) => void,
-    onHighlightObject: (objectName: string) => Promise<void>,
+    onHighlightObject: (objectName: string, trackingDurationSeconds?: number) => Promise<void>,
     onDisplayImage: (query: string) => Promise<void>,
     onPlayYouTubeVideo: (video: YouTubeVideo) => void,
 ): Promise<void> {
@@ -158,11 +163,11 @@ export async function startSession(
                         console.log(`🔧 [TOOL CALL] Parameters:`, JSON.stringify(fc.args, null, 2));
 
                         if (fc.name === 'highlightObject') {
-                            const { object_name } = fc.args as { object_name: string };
+                            const { object_name, tracking_duration_seconds } = fc.args as { object_name: string; tracking_duration_seconds?: number };
 
                             try {
                                 // Call the backend to highlight the object
-                                await onHighlightObject(object_name);
+                                await onHighlightObject(object_name, tracking_duration_seconds);
 
                                 // Send success response to Gemini
                                 console.log(`✅ [TOOL CALL] ${fc.name} succeeded`);
@@ -172,7 +177,7 @@ export async function startSession(
                                             functionResponses: {
                                                 id: fc.id,
                                                 name: fc.name,
-                                                response: { result: `Successfully tracking ${object_name}` },
+                                                response: { result: `Successfully tracking ${object_name}${tracking_duration_seconds ? ` for ${tracking_duration_seconds} seconds` : ''}` },
                                             }
                                         });
                                     });
@@ -352,7 +357,7 @@ export async function startSession(
                 { functionDeclarations: [highlightObjectFunctionDeclaration, displayImageFunctionDeclaration, getVideoFunctionDeclaration] },
                 { googleSearch: {} }
             ],
-            systemInstruction: 'You are R-Hat, a friendly and helpful AI assistant that can see and hear. Respond to the user based on what you perceive from their video and audio. Keep your responses concise and conversational. When the user asks you to highlight, track, or show something in their camera view, use the `highlightObject` tool with a clear description of the object (e.g., "red drill", "capacitor", "multimeter"). The system will automatically detect the object, create a bounding box, and track it across frames. When the user asks to see, show, or display an image of something, use the `displayImage` tool to fetch and display the image in the AR overlay. When the user wants to watch a tutorial or needs a video demonstration, call the `getVideo` tool with a descriptive query and include any requested start timestamp so the correct YouTube video can be played in the interface.',
+            systemInstruction: SYSTEM_INSTRUCTION,
         },
     });
 
