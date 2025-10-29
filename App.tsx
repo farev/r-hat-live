@@ -4,9 +4,10 @@ import { Controls } from './components/Controls';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
 import { ImageOverlay } from './components/ImageOverlay';
 import { YouTubePlayer } from './components/YouTubePlayer';
+import { ChecklistPanel } from './components/ChecklistPanel';
 import { startSession, stopSession } from './services/geminiService';
 import { Sender, TranscriptionEntry, AIState, TrackedObject } from './types';
-import { DisplayedImage, YouTubeVideo } from './types/tools';
+import { DisplayedImage, YouTubeVideo, ChecklistItem, ChecklistUpdateArgs } from './types/tools';
 import { highlightObject, updateTrackers, clearAllTrackers, removeTracker, canvasToBase64 } from './services/trackingService';
 import { fetchImage } from './services/imageService';
 
@@ -21,15 +22,20 @@ export default function App() {
   const [trackedObjects, setTrackedObjects] = useState<TrackedObject[]>([]);
   const [displayedImages, setDisplayedImages] = useState<DisplayedImage[]>([]);
   const [currentVideo, setCurrentVideo] = useState<YouTubeVideo | null>(null);
+  const [checklist, setChecklist] = useState<{ title?: string; items: ChecklistItem[] }>({
+    title: undefined,
+    items: [],
+  });
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const trackingIntervalRef = useRef<number | null>(null);
+  const checklistIdRef = useRef(0);
 
   const updateStatus = useCallback((message: string, statusOverride?: Status) => {
     setStatusMessage(message);
     if(statusOverride) setStatus(statusOverride);
-  }, []);
+  }, [checklistIdRef]);
 
   const addTranscriptionEntry = useCallback((entry: TranscriptionEntry) => {
     setTranscriptions(prev => [...prev, entry]);
@@ -182,6 +188,119 @@ export default function App() {
     setCurrentVideo(null);
   }, []);
 
+  const handleUpdateChecklist = useCallback((update: ChecklistUpdateArgs) => {
+    setChecklist(prev => {
+      if (update.clear) {
+        return { title: undefined, items: [] };
+      }
+
+      const normalizedTitle = typeof update.title === 'string'
+        ? (update.title.trim().length > 0 ? update.title.trim() : undefined)
+        : prev.title;
+
+      const applyStatusChange = (
+        items: ChecklistItem[],
+        targets: string[] | undefined,
+        mode: 'complete' | 'incomplete' | 'toggle'
+      ): ChecklistItem[] => {
+        if (!targets || targets.length === 0) return items;
+
+        const idTargets = new Set<string>();
+        const labelTargets = new Set<string>();
+
+        targets.forEach(raw => {
+          const trimmed = raw.trim();
+          if (!trimmed) return;
+          idTargets.add(trimmed);
+          labelTargets.add(trimmed.toLowerCase());
+        });
+
+        if (idTargets.size === 0 && labelTargets.size === 0) {
+          return items;
+        }
+
+        return items.map(item => {
+          const labelKey = item.label.trim().toLowerCase();
+          const matches = idTargets.has(item.id) || labelTargets.has(labelKey);
+          if (!matches) {
+            return item;
+          }
+
+          if (mode === 'toggle') {
+            return { ...item, completed: !item.completed };
+          }
+
+          return { ...item, completed: mode === 'complete' };
+        });
+      };
+
+      let nextItems: ChecklistItem[];
+
+      if (update.items) {
+        const trimmedItems = update.items
+          .map(item => ({
+            ...item,
+            label: item.label.trim(),
+          }))
+          .filter(item => item.label.length > 0);
+
+        if (trimmedItems.length === 0) {
+          return { title: normalizedTitle, items: [] };
+        }
+
+        const previousById = new Map(prev.items.map(item => [item.id, item]));
+        const previousByLabel = new Map(prev.items.map(item => [item.label.toLowerCase(), item]));
+
+        nextItems = trimmedItems.map((item, index) => {
+          const candidateId = item.id?.trim();
+          let resolvedId = candidateId && candidateId.length > 0 ? candidateId : undefined;
+
+          if (!resolvedId) {
+            const existingByLabel = previousByLabel.get(item.label.toLowerCase());
+            resolvedId = existingByLabel?.id;
+          }
+
+          if (!resolvedId) {
+            checklistIdRef.current += 1;
+            resolvedId = `checklist-${Date.now()}-${checklistIdRef.current}-${index}`;
+          }
+
+          const previous = previousById.get(resolvedId) ?? previousByLabel.get(item.label.toLowerCase());
+
+          return {
+            id: resolvedId,
+            label: item.label,
+            completed: typeof item.completed === 'boolean' ? item.completed : previous?.completed ?? false,
+          };
+        });
+      } else {
+        nextItems = prev.items.map(item => ({ ...item }));
+      }
+
+      nextItems = applyStatusChange(nextItems, update.completedItems, 'complete');
+      nextItems = applyStatusChange(nextItems, update.incompleteItems, 'incomplete');
+      nextItems = applyStatusChange(nextItems, update.toggleItems, 'toggle');
+
+      return {
+        title: normalizedTitle,
+        items: nextItems,
+      };
+    });
+  }, []);
+
+  const handleToggleChecklistItem = useCallback((itemId: string) => {
+    setChecklist(prev => ({
+      ...prev,
+      items: prev.items.map(item =>
+        item.id === itemId ? { ...item, completed: !item.completed } : item
+      ),
+    }));
+  }, []);
+
+  const handleClearChecklist = useCallback(() => {
+    setChecklist({ title: undefined, items: [] });
+  }, []);
+
   useEffect(() => {
     // Stop tracking loop if no objects
     if (trackedObjects.length === 0 && trackingIntervalRef.current) {
@@ -285,7 +404,8 @@ export default function App() {
           setAiState,
           handleHighlightObject,
           handleDisplayImage,
-          handlePlayYouTubeVideo
+          handlePlayYouTubeVideo,
+          handleUpdateChecklist
         );
       }
     } catch (error) {
@@ -326,6 +446,7 @@ export default function App() {
     setAiState('idle');
     setTrackedObjects([]);
     setDisplayedImages([]);
+    setChecklist({ title: undefined, items: [] });
     updateStatus('Session ended. Click the mic to start again.');
     setTranscriptions(prev => [...prev, {
       sender: Sender.System,
@@ -341,6 +462,17 @@ export default function App() {
         images={displayedImages}
         onClose={(id) => setDisplayedImages(prev => prev.filter(img => img.id !== id))}
       />
+
+      {!!checklist.items.length && (
+        <div className="absolute top-1/2 right-8 transform -translate-y-1/2 w-72 z-30 pointer-events-auto">
+          <ChecklistPanel
+            title={checklist.title}
+            items={checklist.items}
+            onToggle={handleToggleChecklistItem}
+            onClear={handleClearChecklist}
+          />
+        </div>
+      )}
 
       {/* Fixed Header */}
       <header className="flex justify-between items-start p-4 flex-shrink-0">

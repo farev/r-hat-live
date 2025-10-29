@@ -95,3 +95,25 @@ export interface YouTubeToolResult {
   video: YouTubeVideo;
   rawResponse?: any;
 }
+
+// Checklist tool specific types
+export interface ChecklistItemInput {
+  id?: string;
+  label: string;
+  completed?: boolean;
+}
+
+export interface ChecklistItem {
+  id: string;
+  label: string;
+  completed: boolean;
+}
+
+export interface ChecklistUpdateArgs {
+  title?: string;
+  items?: ChecklistItemInput[];
+  clear?: boolean;
+  completedItems?: string[];
+  incompleteItems?: string[];
+  toggleItems?: string[];
+}

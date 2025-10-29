@@ -2,7 +2,7 @@
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from "@google/genai";
 import { decode, decodeAudioData, createPcmBlob, blobToBase64 } from '../utils/audioUtils';
 import { Sender, TranscriptionEntry, AIState } from '../types';
-import { PlayYouTubeArgs, YouTubeVideo } from '../types/tools';
+import { PlayYouTubeArgs, YouTubeVideo, ChecklistUpdateArgs } from '../types/tools';
 import { searchYouTubeVideo } from './youtubeService';
 import { SYSTEM_INSTRUCTION } from './systemInstruction';
 
@@ -76,6 +76,67 @@ const getVideoFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
+const updateChecklistFunctionDeclaration: FunctionDeclaration = {
+  name: 'updateChecklist',
+  description: 'Creates or updates the on-screen checklist so the user can follow along with the current plan. Call this when you want to guide the user with clear steps or when the list changes.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: {
+        type: Type.STRING,
+        description: 'Optional short title that will appear above the checklist (e.g., "Prep Steps").',
+      },
+      items: {
+        type: Type.ARRAY,
+        description: 'Ordered list of tasks to display. Provide the full list you want the user to see.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: {
+              type: Type.STRING,
+              description: 'Stable identifier for the task. Reuse it when updating the same item later.',
+            },
+            label: {
+              type: Type.STRING,
+              description: 'User-facing description of the task.',
+            },
+            completed: {
+              type: Type.BOOLEAN,
+              description: 'Mark true if this task is already finished so it appears checked.',
+            },
+          },
+          required: ['label'],
+        },
+      },
+      clear: {
+        type: Type.BOOLEAN,
+        description: 'Set to true to remove the current checklist from the HUD.',
+      },
+      completed_items: {
+        type: Type.ARRAY,
+        description: 'List of item labels or IDs that should be marked as completed. Use this when you observe the user finishing a step.',
+        items: {
+          type: Type.STRING,
+        },
+      },
+      incomplete_items: {
+        type: Type.ARRAY,
+        description: 'List of item labels or IDs that should be marked as not completed (e.g., when a user reopens or redoes a step).',
+        items: {
+          type: Type.STRING,
+        },
+      },
+      toggle_items: {
+        type: Type.ARRAY,
+        description: 'List of item labels or IDs whose completion status should be toggled.',
+        items: {
+          type: Type.STRING,
+        },
+      },
+    },
+  },
+};
+
 
 export async function startSession(
     videoElement: HTMLVideoElement,
@@ -86,6 +147,7 @@ export async function startSession(
     onHighlightObject: (objectName: string, trackingDurationSeconds?: number) => Promise<void>,
     onDisplayImage: (query: string) => Promise<void>,
     onPlayYouTubeVideo: (video: YouTubeVideo) => void,
+    onUpdateChecklist: (update: ChecklistUpdateArgs) => Promise<void> | void,
 ): Promise<void> {
     onStatusUpdate("Initializing Gemini...");
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
@@ -290,6 +352,111 @@ export async function startSession(
                                 }
                             }
                         }
+                        else if (fc.name === 'updateChecklist') {
+                            const rawArgs = fc.args as ChecklistUpdateArgs & { items?: unknown };
+
+                            const normalizeTargets = (value: unknown): string[] | undefined => {
+                                if (!Array.isArray(value)) return undefined;
+
+                                const normalized = value
+                                    .map((entry) => {
+                                        if (typeof entry === 'string' || typeof entry === 'number') {
+                                            return String(entry).trim();
+                                        }
+
+                                        if (typeof entry === 'object' && entry !== null) {
+                                            const entryId = typeof (entry as { id?: unknown }).id === 'string'
+                                                ? (entry as { id: string }).id.trim()
+                                                : '';
+                                            const entryLabel = typeof (entry as { label?: unknown }).label === 'string'
+                                                ? (entry as { label: string }).label.trim()
+                                                : '';
+                                            return entryId || entryLabel;
+                                        }
+                                        return '';
+                                    })
+                                    .map(item => item.trim())
+                                    .filter(item => item.length > 0);
+
+                                return normalized.length > 0 ? normalized : undefined;
+                            };
+
+                            const sanitizedItems = Array.isArray(rawArgs.items)
+                                ? rawArgs.items
+                                    .map((item) => {
+                                        if (typeof item === 'string' || typeof item === 'number') {
+                                            const label = String(item).trim();
+                                            return label.length > 0 ? { label } : null;
+                                        }
+
+                                        if (typeof item === 'object' && item !== null) {
+                                            const label = typeof (item as { label?: unknown }).label === 'string'
+                                                ? (item as { label: string }).label.trim()
+                                                : '';
+                                            if (label.length === 0) return null;
+
+                                            return {
+                                                id: typeof (item as { id?: unknown }).id === 'string'
+                                                    && (item as { id: string }).id.trim().length > 0
+                                                    ? (item as { id: string }).id.trim()
+                                                    : undefined,
+                                                label,
+                                                completed: typeof (item as { completed?: unknown }).completed === 'boolean'
+                                                    ? (item as { completed: boolean }).completed
+                                                    : undefined,
+                                            };
+                                        }
+
+                                        return null;
+                                    })
+                                    .filter((item): item is { id?: string; label: string; completed?: boolean } => item !== null)
+                                : undefined;
+
+                            const updatePayload: ChecklistUpdateArgs = {
+                                title: typeof rawArgs.title === 'string' ? rawArgs.title : undefined,
+                                clear: rawArgs.clear === true,
+                                items: sanitizedItems,
+                                completedItems: normalizeTargets((rawArgs as { completed_items?: unknown }).completed_items),
+                                incompleteItems: normalizeTargets((rawArgs as { incomplete_items?: unknown }).incomplete_items),
+                                toggleItems: normalizeTargets((rawArgs as { toggle_items?: unknown }).toggle_items),
+                            };
+
+                            try {
+                                await onUpdateChecklist(updatePayload);
+
+                                console.log(`✅ [TOOL CALL] ${fc.name} succeeded`);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: updatePayload.clear
+                                                        ? 'Checklist cleared.'
+                                                        : `Checklist updated with ${(updatePayload.items?.length ?? 0)} item(s).`,
+                                                },
+                                            },
+                                        });
+                                    });
+                                }
+                            } catch (error) {
+                                console.error(`❌ [TOOL CALL] ${fc.name} failed:`, error);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: `Error: ${error instanceof Error ? error.message : 'Failed to update checklist'}`,
+                                                },
+                                            },
+                                        });
+                                    });
+                                }
+                            }
+                        }
                     }
                     setTimeout(() => onAIStateUpdate('listening'), 500);
                 }
@@ -354,7 +521,7 @@ export async function startSession(
                 voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
             },
             tools: [
-                { functionDeclarations: [highlightObjectFunctionDeclaration, displayImageFunctionDeclaration, getVideoFunctionDeclaration] },
+                { functionDeclarations: [highlightObjectFunctionDeclaration, displayImageFunctionDeclaration, getVideoFunctionDeclaration, updateChecklistFunctionDeclaration] },
                 { googleSearch: {} }
             ],
             systemInstruction: SYSTEM_INSTRUCTION,
