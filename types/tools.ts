@@ -117,3 +117,11 @@ export interface ChecklistUpdateArgs {
   incompleteItems?: string[];
   toggleItems?: string[];
 }
+
+// Timer tool specific types
+export interface StartTimerArgs {
+  /**
+   * Duration to set the timer for, in seconds. Example: 300 for 5 minutes.
+   */
+  time: number;
+}

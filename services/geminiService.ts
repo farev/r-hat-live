@@ -2,7 +2,7 @@
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from "@google/genai";
 import { decode, decodeAudioData, createPcmBlob, blobToBase64 } from '../utils/audioUtils';
 import { Sender, TranscriptionEntry, AIState } from '../types';
-import { PlayYouTubeArgs, YouTubeVideo, ChecklistUpdateArgs } from '../types/tools';
+import { PlayYouTubeArgs, YouTubeVideo, ChecklistUpdateArgs, StartTimerArgs } from '../types/tools';
 import { searchYouTubeVideo } from './youtubeService';
 import { SYSTEM_INSTRUCTION } from './systemInstruction';
 
@@ -137,6 +137,83 @@ const updateChecklistFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
+const startTimerFunctionDeclaration: FunctionDeclaration = {
+  name: 'startTimer',
+  description: 'Starts a countdown timer that appears at the top of the HUD so the user can keep track of durations during a task.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      time: {
+        type: Type.NUMBER,
+        description: 'Duration of the timer in seconds. Example: 300 for a five-minute timer.',
+      },
+    },
+    required: ['time'],
+  },
+};
+
+const parseTimerDurationSeconds = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (/^\d+(:\d+){1,2}$/.test(trimmed)) {
+      const segments = trimmed.split(':').map(Number);
+      if (segments.some(segment => Number.isNaN(segment))) {
+        return null;
+      }
+      if (segments.length === 2) {
+        const [minutes, seconds] = segments;
+        return minutes * 60 + seconds;
+      }
+      if (segments.length === 3) {
+        const [hours, minutes, seconds] = segments;
+        return hours * 3600 + minutes * 60 + seconds;
+      }
+      return null;
+    }
+
+    const durationPattern = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)/g;
+    let totalSeconds = 0;
+    let matched = false;
+    let match: RegExpExecArray | null;
+
+    while ((match = durationPattern.exec(trimmed)) !== null) {
+      matched = true;
+      const valuePart = parseFloat(match[1]);
+      if (Number.isNaN(valuePart)) {
+        return null;
+      }
+
+      const unit = match[2];
+      if (/hours?|hrs?|hr|h/.test(unit)) {
+        totalSeconds += valuePart * 3600;
+      } else if (/minutes?|mins?|min|m/.test(unit)) {
+        totalSeconds += valuePart * 60;
+      } else {
+        totalSeconds += valuePart;
+      }
+    }
+
+    if (matched) {
+      return Math.round(totalSeconds);
+    }
+
+    const numericValue = Number(trimmed);
+    if (!Number.isNaN(numericValue)) {
+      return Math.round(numericValue);
+    }
+  }
+
+  return null;
+};
+
 
 export async function startSession(
     videoElement: HTMLVideoElement,
@@ -148,6 +225,7 @@ export async function startSession(
     onDisplayImage: (query: string) => Promise<void>,
     onPlayYouTubeVideo: (video: YouTubeVideo) => void,
     onUpdateChecklist: (update: ChecklistUpdateArgs) => Promise<void> | void,
+    onStartTimer: (timeSeconds: number) => Promise<void> | void,
 ): Promise<void> {
     onStatusUpdate("Initializing Gemini...");
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
@@ -352,6 +430,66 @@ export async function startSession(
                                 }
                             }
                         }
+                        else if (fc.name === 'startTimer') {
+                            const rawArgs = fc.args as StartTimerArgs & { time?: unknown };
+                            const parsedSeconds = parseTimerDurationSeconds((rawArgs as { time?: unknown }).time);
+
+                            const seconds = parsedSeconds !== null ? Math.round(parsedSeconds) : NaN;
+
+                            if (!Number.isFinite(seconds) || seconds <= 0) {
+                                console.error(`❌ [TOOL CALL] ${fc.name} invalid duration:`, rawArgs);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: 'Error: Timer duration must be a positive number of seconds.',
+                                                },
+                                            },
+                                        });
+                                    });
+                                }
+                                continue;
+                            }
+
+                            try {
+                                await onStartTimer(seconds);
+
+                                console.log(`✅ [TOOL CALL] ${fc.name} succeeded`);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: `Timer started for ${seconds} second(s).`,
+                                                },
+                                            },
+                                        });
+                                    });
+                                }
+                            } catch (error) {
+                                console.error(`❌ [TOOL CALL] ${fc.name} failed:`, error);
+                                if (sessionPromise) {
+                                    sessionPromise.then((s) => {
+                                        s.sendToolResponse({
+                                            functionResponses: {
+                                                id: fc.id,
+                                                name: fc.name,
+                                                response: {
+                                                    result: `Error: ${
+                                                        error instanceof Error ? error.message : 'Failed to start timer'
+                                                    }`,
+                                                },
+                                            },
+                                        });
+                                    });
+                                }
+                            }
+                        }
                         else if (fc.name === 'updateChecklist') {
                             const rawArgs = fc.args as ChecklistUpdateArgs & { items?: unknown };
 
@@ -521,7 +659,7 @@ export async function startSession(
                 voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
             },
             tools: [
-                { functionDeclarations: [highlightObjectFunctionDeclaration, displayImageFunctionDeclaration, getVideoFunctionDeclaration, updateChecklistFunctionDeclaration] },
+                { functionDeclarations: [highlightObjectFunctionDeclaration, displayImageFunctionDeclaration, getVideoFunctionDeclaration, updateChecklistFunctionDeclaration, startTimerFunctionDeclaration] },
                 { googleSearch: {} }
             ],
             systemInstruction: SYSTEM_INSTRUCTION,

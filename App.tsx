@@ -5,6 +5,7 @@ import { TranscriptionPanel } from './components/TranscriptionPanel';
 import { ImageOverlay } from './components/ImageOverlay';
 import { YouTubePlayer } from './components/YouTubePlayer';
 import { ChecklistPanel } from './components/ChecklistPanel';
+import { TimerDisplay } from './components/TimerDisplay';
 import { startSession, stopSession } from './services/geminiService';
 import { Sender, TranscriptionEntry, AIState, TrackedObject } from './types';
 import { DisplayedImage, YouTubeVideo, ChecklistItem, ChecklistUpdateArgs } from './types/tools';
@@ -26,6 +27,8 @@ export default function App() {
     title: undefined,
     items: [],
   });
+  const [activeTimer, setActiveTimer] = useState<{ targetTimestamp: number; durationSeconds: number } | null>(null);
+  const [timerRemainingSeconds, setTimerRemainingSeconds] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -301,6 +304,22 @@ export default function App() {
     setChecklist({ title: undefined, items: [] });
   }, []);
 
+  const cancelTimer = useCallback(() => {
+    setActiveTimer(null);
+    setTimerRemainingSeconds(0);
+  }, []);
+
+  const handleStartTimer = useCallback((timeSeconds: number) => {
+    const normalizedSeconds = Math.max(1, Math.round(timeSeconds));
+    const now = Date.now();
+
+    setActiveTimer({
+      targetTimestamp: now + normalizedSeconds * 1000,
+      durationSeconds: normalizedSeconds,
+    });
+    setTimerRemainingSeconds(normalizedSeconds);
+  }, []);
+
   useEffect(() => {
     // Stop tracking loop if no objects
     if (trackedObjects.length === 0 && trackingIntervalRef.current) {
@@ -308,6 +327,30 @@ export default function App() {
       trackingIntervalRef.current = null;
     }
   }, [trackedObjects]);
+
+  useEffect(() => {
+    if (!activeTimer) {
+      setTimerRemainingSeconds(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const remainingMs = activeTimer.targetTimestamp - Date.now();
+      const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
+      setTimerRemainingSeconds(remaining);
+
+      if (remaining <= 0) {
+        cancelTimer();
+      }
+    };
+
+    updateRemaining();
+    const intervalId = window.setInterval(updateRemaining, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeTimer, cancelTimer]);
 
   useEffect(() => {
     return () => {
@@ -405,7 +448,8 @@ export default function App() {
           handleHighlightObject,
           handleDisplayImage,
           handlePlayYouTubeVideo,
-          handleUpdateChecklist
+          handleUpdateChecklist,
+          handleStartTimer
         );
       }
     } catch (error) {
@@ -423,6 +467,7 @@ export default function App() {
   const handleStop = async () => {
     stopSession();
     handleClearVideo();
+    cancelTimer();
 
     // Stop tracking loop
     if (trackingIntervalRef.current) {
@@ -457,6 +502,17 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col font-sans hud-safe relative">
+      {/* Timer Overlay */}
+      {activeTimer && timerRemainingSeconds > 0 && (
+        <div className="absolute top-28 left-1/2 -translate-x-1/2 z-40">
+          <TimerDisplay
+            remainingSeconds={timerRemainingSeconds}
+            durationSeconds={activeTimer.durationSeconds}
+            onCancel={cancelTimer}
+          />
+        </div>
+      )}
+
       {/* Image Overlay */}
       <ImageOverlay
         images={displayedImages}
